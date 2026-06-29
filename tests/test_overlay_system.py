@@ -16,9 +16,9 @@ def _copy_authority(tmp_path: Path) -> Path:
     return target
 
 
-def _write_overlay(root: Path, overlay_id: str = "overlay.test", **updates) -> dict:
+def _write_overlay(root: Path, registration_id: str = "overlay.test", **updates) -> dict:
     payload = {
-        "overlay_id": overlay_id,
+        "overlay_id": registration_id,
         "version": "1.0.0",
         "provenance": {
             "source": "tests",
@@ -38,16 +38,16 @@ def _write_overlay(root: Path, overlay_id: str = "overlay.test", **updates) -> d
         "supersession": {"superseded_by": "", "reason": "not superseded"},
     }
     payload.update(updates)
-    path = root / ".loom" / "overlays" / f"{overlay_id}.json"
+    path = root / ".loom" / "overlays" / f"{registration_id}.json"
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     registry_path = root / ".loom" / "overlays" / "registry.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
-    registry["overlays"][overlay_id] = {
-        "path": f".loom/overlays/{overlay_id}.json",
-        "version": payload["version"],
-        "source": payload["provenance"]["source"],
-        "applicability": payload["applicability"],
-        "lifecycle_status": payload["lifecycle"]["status"],
+    registry["overlays"][registration_id] = {
+        "path": f".loom/overlays/{registration_id}.json",
+        "version": payload.get("version", "1.0.0"),
+        "source": payload.get("provenance", {}).get("source", "tests") if isinstance(payload.get("provenance"), dict) else "tests",
+        "applicability": payload.get("applicability", {}),
+        "lifecycle_status": payload.get("lifecycle", {}).get("status", "validated") if isinstance(payload.get("lifecycle"), dict) else "validated",
     }
     registry_path.write_text(json.dumps(registry, indent=2), encoding="utf-8")
     return payload
@@ -93,8 +93,8 @@ def test_provenance_failures(tmp_path, monkeypatch):
 
 def test_conflicting_overlays(tmp_path, monkeypatch):
     root = _copy_authority(tmp_path)
-    _write_overlay(root, "overlay.one")
-    _write_overlay(root, "overlay.two")
+    _write_overlay(root, "overlay.one", overlay_id="overlay.conflict")
+    _write_overlay(root, "overlay.two", overlay_id="overlay.conflict")
     monkeypatch.chdir(root)
     report = validate_overlay_authority()
     assert not report.passed

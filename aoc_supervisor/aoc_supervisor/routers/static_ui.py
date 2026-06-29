@@ -19,6 +19,8 @@ from aoc_supervisor.repo_paths import (
     PLACEHOLDER_HTML_PATH,
     PROCESS_STAGE_UX_MAP_PATH,
     SANDBOX_PAGES,
+    SANDBOX_SHARED_FILES,
+    SANDBOX_WORKSPACE_FRAGMENTS,
     TERMINAL_JS_PATH,
 )
 from fastapi import APIRouter, HTTPException
@@ -106,4 +108,21 @@ async def sandbox_page(page_name: str) -> FileResponse:
     path = SANDBOX_PAGES.get(page_name)
     if path is None or not path.exists():
         raise HTTPException(status_code=404, detail=f"Unknown sandbox page: {page_name}")
+    return FileResponse(path, media_type="text/html")
+
+
+@router.get("/shared/{asset_name}")
+async def sandbox_shared_asset(asset_name: str) -> FileResponse:
+    path = SANDBOX_SHARED_FILES.get(asset_name)
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown sandbox shared asset: {asset_name}")
+    media_type = "text/css" if asset_name.endswith(".css") else "application/javascript"
+    return FileResponse(path, media_type=media_type)
+
+
+@router.get("/workspaces/{fragment_name}")
+async def sandbox_workspace_fragment(fragment_name: str) -> FileResponse:
+    path = SANDBOX_WORKSPACE_FRAGMENTS.get(fragment_name)
+    if path is None or not path.exists():
+        raise HTTPException(status_code=404, detail=f"Unknown sandbox workspace fragment: {fragment_name}")
     return FileResponse(path, media_type="text/html")

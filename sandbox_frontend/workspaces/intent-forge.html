@@ -5,33 +5,51 @@
 
   <!-- Hero -->
   <section class="mb-gutter">
-    <h1 class="font-headline-lg text-headline-lg text-primary mb-stack-md">LooM</h1>
-    <p class="text-on-surface-variant font-body-lg opacity-80">Canvas your vision before architecture is synthesized</p>
+    <h1 id="loom-brand" class="font-headline-lg text-headline-lg text-primary mb-stack-md">Loom</h1>
+    <p id="loom-subtitle" class="text-on-surface-variant font-body-lg opacity-80">Canvas your vision before architecture is synthesized</p>
   </section>
+
+  <!-- Prompt Panel -->
+  <div class="glass-panel rounded-xl p-container-margin space-y-stack-lg">
+    <label for="prompt-input" class="font-label-caps text-label-caps text-on-surface-variant">Express your vision</label>
+    <textarea id="prompt-input"
+              class="w-full min-h-[120px] bg-surface-container-high border border-outline-variant/30 rounded-xl p-stack-lg font-body-sm text-body-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+              placeholder="Describe the software vision Loom should interrogate..."></textarea>
+    <button id="btn-start-session"
+            class="px-6 py-2 bg-primary text-on-primary font-bold rounded-xl hover:opacity-90 active:scale-95 transition-all spring-transition disabled:opacity-30" disabled>
+      Start Intent Forge
+    </button>
+  </div>
 
   <!-- Question Panel -->
   <div class="glass-panel rounded-xl p-container-margin space-y-stack-lg">
     <div id="question-text" class="font-title-md text-title-md text-on-surface min-h-[2rem]">
-      What software vision would you like to realize today?
+      Start a session to receive the first backend-generated interrogation question.
     </div>
     <div id="question-why" class="font-body-sm text-body-sm text-on-surface-variant/70">
-      LooM needs a starting point to interrogate your intent.
+      Loom relies on the intent-forge API as the authoritative lifecycle source.
     </div>
     <div id="question-default" class="font-body-sm text-body-sm text-tertiary hidden">
     </div>
+    <label for="answer-input" class="font-label-caps text-label-caps text-on-surface-variant">Your Answer</label>
     <textarea id="answer-input"
               class="w-full min-h-[100px] bg-surface-container-high border border-outline-variant/30 rounded-xl p-stack-lg font-body-sm text-body-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y"
-              placeholder="Describe your project or answer the question above..."></textarea>
+              placeholder="Answer the active question..."></textarea>
     <div class="flex gap-stack-md">
       <button id="btn-submit-answer"
-              class="px-6 py-2 bg-primary text-on-primary font-bold rounded-xl hover:opacity-90 active:scale-95 transition-all spring-transition">
-        Submit
+              class="px-6 py-2 bg-primary text-on-primary font-bold rounded-xl hover:opacity-90 active:scale-95 transition-all spring-transition disabled:opacity-30" disabled>
+        Submit Answer
+      </button>
+      <button id="btn-undo-draft"
+              class="px-6 py-2 border border-outline-variant/30 text-on-surface font-medium rounded-xl hover:bg-surface-container-high active:scale-95 transition-all spring-transition">
+        Undo Draft
       </button>
       <button id="btn-finalize-now"
-              class="px-6 py-2 border border-outline-variant/30 text-on-surface font-medium rounded-xl hover:bg-surface-container-high active:scale-95 transition-all spring-transition hidden">
+              class="px-6 py-2 border border-outline-variant/30 text-on-surface font-medium rounded-xl hover:bg-surface-container-high active:scale-95 transition-all spring-transition disabled:opacity-30" disabled>
         Finalize Now
       </button>
     </div>
+    <div id="vision-feedback" class="font-body-sm text-body-sm text-on-surface-variant" role="status" aria-live="polite"></div>
   </div>
 
   <!-- Readiness Gate -->
@@ -44,7 +62,7 @@
           <span class="font-body-sm text-body-sm text-on-surface-variant">/ 1.00</span>
         </div>
         <p id="readiness-reason" class="font-body-sm text-body-sm text-on-surface-variant mt-stack-sm">
-          Awaiting initial intent.
+          Awaiting backend session state.
         </p>
       </div>
       <div>
@@ -56,11 +74,16 @@
   </div>
 
   <!-- Understanding Panel -->
-  <div class="glass-panel rounded-xl p-container-margin">
-    <h3 class="font-title-md text-title-md text-on-surface mb-stack-md">Understanding</h3>
+  <div class="glass-panel rounded-xl p-container-margin space-y-stack-md">
+    <h3 class="font-title-md text-title-md text-on-surface">Understanding</h3>
     <ul id="understanding-list" class="space-y-stack-sm">
       <li class="font-body-sm text-body-sm text-on-surface-variant py-stack-sm border-b border-outline-variant/20">No requirements yet captured.</li>
     </ul>
+    <label for="vision-revision-editor" class="font-label-caps text-label-caps text-on-surface-variant">Edit Answer for Revision</label>
+    <textarea id="vision-revision-editor"
+              class="w-full min-h-[80px] bg-surface-container-high border border-outline-variant/30 rounded-xl p-stack-lg font-body-sm text-body-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-1 focus:ring-primary resize-y"
+              data-question-id=""
+              placeholder="Select a captured answer to revise it..."></textarea>
   </div>
 
   <!-- Handoff Controls -->

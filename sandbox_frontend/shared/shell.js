@@ -111,8 +111,8 @@
    * ═══════════════════════════════════════════════════════════ */
 
   var state = {
-    currentWorkspace: "hub",
-    activeTool: "navigate",
+    currentWorkspace: null,
+    activeTool: "inspect",
     consoleTab: "log",
     dashboardOpen: false,
     searchQuery: "",
@@ -357,7 +357,7 @@
     if (hash && WORKSPACES[hash]) {
       navigateTo(hash);
     } else {
-      navigateTo("hub");
+      navigateTo("intent-forge");
     }
   }
 
@@ -398,7 +398,7 @@
     if (initialHash && WORKSPACES[initialHash]) {
       navigateTo(initialHash);
     } else {
-      navigateTo("hub");
+      navigateTo("intent-forge");
     }
   }
 

@@ -54,3 +54,21 @@ SANDBOX_PAGES = {
     "packet-export": FRONTEND_DIR / "packet-export.html",
     "topological-observatory": FRONTEND_DIR / "topological-observatory.html",
 }
+
+# ── Sandbox Frontend static assets/fragments ──
+SANDBOX_SHARED_FILES = {
+    "shell.css": FRONTEND_DIR / "shared" / "shell.css",
+    "shell.js": FRONTEND_DIR / "shared" / "shell.js",
+    "tailwind-config.js": FRONTEND_DIR / "shared" / "tailwind-config.js",
+    "intent-forge-driver.js": FRONTEND_DIR / "shared" / "intent-forge-driver.js",
+}
+SANDBOX_WORKSPACE_FRAGMENTS = {
+    "hub.html": FRONTEND_DIR / "workspaces" / "hub.html",
+    "intent-forge.html": FRONTEND_DIR / "workspaces" / "intent-forge.html",
+    "blueprint-ratification.html": FRONTEND_DIR / "workspaces" / "blueprint-ratification.html",
+    "claims-ledger.html": FRONTEND_DIR / "workspaces" / "claims-ledger.html",
+    "curvature-analysis.html": FRONTEND_DIR / "workspaces" / "curvature-analysis.html",
+    "drift-monitor.html": FRONTEND_DIR / "workspaces" / "drift-monitor.html",
+    "packet-export.html": FRONTEND_DIR / "workspaces" / "packet-export.html",
+    "topological-observatory.html": FRONTEND_DIR / "workspaces" / "topological-observatory.html",
+}

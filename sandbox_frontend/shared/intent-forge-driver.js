@@ -1,0 +1,211 @@
+(function () {
+  "use strict";
+
+  var API_PREFIX = "/api/v1/intent-forge";
+  var ACTIVE_STATUSES = ["QUESTIONING", "CONFLICT_RESOLUTION"];
+  var FINALIZE_STATUSES = ["QUESTIONING", "VALIDATING"];
+
+  function $(id) { return document.getElementById(id); }
+  function explicitMockEnabled() {
+    var qs = new URLSearchParams(window.location.search || "");
+    return qs.get("loom_driver") === "mock" || qs.get("demo") === "1" || window.LOOM_USE_MOCK_DRIVER === true;
+  }
+  function uuid() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0;
+      var v = c === "x" ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+  function feedback(message, error) {
+    var el = $("vision-feedback");
+    if (!el) return;
+    el.textContent = message || "";
+    el.dataset.error = error ? "true" : "false";
+    el.classList.toggle("text-error", !!error);
+    el.classList.toggle("text-on-surface-variant", !error);
+  }
+  function setBusy(isBusy) {
+    var overlay = $("analysis-overlay");
+    if (overlay) {
+      overlay.dataset.busy = isBusy ? "true" : "false";
+      overlay.classList.toggle("hidden", !isBusy);
+    }
+  }
+  function state() {
+    window.LoomIntentForgeState = window.LoomIntentForgeState || {
+      sessionId: null,
+      sessionStatus: "CREATED",
+      blueprintVersion: 0,
+      currentQuestionId: null,
+      answers: []
+    };
+    return window.LoomIntentForgeState;
+  }
+  function headers() {
+    return {
+      "Content-Type": "application/json",
+      "X-User-Id": localStorage.getItem("loom.user_id") || "terminal-user",
+      "X-Loom-Api-Key": localStorage.getItem("loom.api_key") || ""
+    };
+  }
+  function normalizeError(data, status) {
+    if (status === 409) return "Version conflict. Reload the session state before continuing.";
+    if (data && data.detail) return typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
+    return "Request failed with status " + status;
+  }
+  function request(path, options) {
+    return fetch(path, options).then(function (response) {
+      return response.json().catch(function () { return {}; }).then(function (data) {
+        if (!response.ok) throw new Error(normalizeError(data, response.status));
+        return data;
+      });
+    });
+  }
+  function currentQuestion(data) {
+    return data.current_question || data.question || null;
+  }
+  function render(data) {
+    var s = state();
+    if (data.session_id) s.sessionId = data.session_id;
+    if (data.session_status) s.sessionStatus = data.session_status;
+    if (typeof data.blueprint_version === "number") s.blueprintVersion = data.blueprint_version;
+    var question = currentQuestion(data);
+    if (question) {
+      s.currentQuestionId = question.id || question.question_id || null;
+      $("question-text").textContent = question.text || question.prompt || "Answer the next question.";
+      $("question-why").textContent = question.why || question.rationale || "Loom is interrogating the blueprint state.";
+      var def = $("question-default");
+      if (def) {
+        var defaultText = question.default || question.default_answer || "";
+        def.textContent = defaultText;
+        def.classList.toggle("hidden", !defaultText);
+      }
+    }
+    var readiness = (data.latest_analysis && data.latest_analysis.readiness) || data.readiness || {};
+    var score = typeof readiness.score === "number" ? readiness.score : 0;
+    $("readiness-score").textContent = score.toFixed(2);
+    $("readiness-reason").textContent = readiness.reason || data.session_status || "Awaiting backend readiness.";
+    var gate = $("readiness-gate");
+    if (gate) gate.dataset.canHandoff = readiness.ready_to_finalize || data.session_status === "FINAL_CONFIRMATION" ? "true" : "false";
+    renderUnderstanding(data);
+    syncButtons();
+  }
+  function renderUnderstanding(data) {
+    var list = $("understanding-list");
+    if (!list) return;
+    var items = data.answers || data.answer_history || state().answers || [];
+    if (!items.length && data.latest_analysis && data.latest_analysis.claims) items = data.latest_analysis.claims;
+    list.innerHTML = "";
+    if (!items.length) {
+      list.innerHTML = '<li class="font-body-sm text-body-sm text-on-surface-variant py-stack-sm border-b border-outline-variant/20">No requirements yet captured.</li>';
+      return;
+    }
+    items.forEach(function (item, index) {
+      var li = document.createElement("li");
+      li.className = "font-body-sm text-body-sm text-on-surface-variant py-stack-sm border-b border-outline-variant/20";
+      var answer = item.answer || item.text || item.claim || JSON.stringify(item);
+      var qid = item.question_id || item.id || ("answer-" + index);
+      li.innerHTML = '<button class="text-primary mr-2" data-revise-question-id="' + qid + '">Revise</button>' + answer;
+      list.appendChild(li);
+    });
+  }
+  function syncButtons() {
+    var s = state();
+    var prompt = $("prompt-input");
+    var answer = $("answer-input");
+    var start = $("btn-start-session");
+    var submit = $("btn-submit-answer");
+    var finalize = $("btn-finalize-now");
+    var confirm = $("btn-confirm-handoff");
+    var accept = $("btn-accept-handoff");
+    if (start) start.disabled = !(prompt && prompt.value.trim());
+    if (submit) submit.disabled = !(answer && answer.value.trim() && s.sessionId && s.currentQuestionId && ACTIVE_STATUSES.indexOf(s.sessionStatus) >= 0);
+    if (finalize) finalize.disabled = !(s.sessionId && FINALIZE_STATUSES.indexOf(s.sessionStatus) >= 0);
+    if (confirm) confirm.disabled = s.sessionStatus !== "FINAL_CONFIRMATION";
+    if (accept) accept.disabled = s.sessionStatus !== "FINALIZED";
+  }
+  function mutate(path, body) {
+    body = body || {};
+    body.idempotency_key = uuid();
+    return request(path, { method: "POST", headers: headers(), body: JSON.stringify(body) });
+  }
+  var realDriver = {
+    start: function () {
+      var prompt = $("prompt-input").value.trim();
+      if (!prompt) return feedback("Enter a vision before starting.", true);
+      return mutate(API_PREFIX + "/sessions", { prompt: prompt, tier: "paid" });
+    },
+    submit: function () {
+      var s = state();
+      var answer = $("answer-input").value.trim();
+      if (!answer || !s.sessionId || !s.currentQuestionId) return feedback("Answer input and active question are required.", true);
+      return mutate(API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/answers", {
+        question_id: s.currentQuestionId,
+        answer: answer,
+        expected_blueprint_version: s.blueprintVersion
+      }).then(function (data) {
+        s.answers.push({ question_id: s.currentQuestionId, answer: answer });
+        $("answer-input").value = "";
+        localStorage.removeItem("loom.answer_draft");
+        return data;
+      });
+    },
+    finalize: function () {
+      var s = state();
+      return mutate(API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/finalize", { expected_blueprint_version: s.blueprintVersion, force: false });
+    },
+    handoff: function (action) {
+      var s = state();
+      return mutate(API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/handoff", { action: action, expected_blueprint_version: s.blueprintVersion });
+    },
+    revise: function (questionId, answer) {
+      var s = state();
+      return mutate(API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/revise", { question_id: questionId, answer: answer, expected_blueprint_version: s.blueprintVersion });
+    }
+  };
+  var mockDriver = {
+    start: function () { return Promise.resolve({ session_id: "demo-session", session_status: "QUESTIONING", blueprint_version: 1, current_question: { id: "demo-q1", text: "What outcome must the software achieve first?", why: "Demo driver enabled explicitly." }, readiness: { score: 0.1, reason: "Demo session started." } }); },
+    submit: function () { return Promise.resolve({ session_status: "VALIDATING", blueprint_version: 2, readiness: { score: 0.82, ready_to_finalize: true, reason: "Demo answer accepted." } }); },
+    finalize: function () { return Promise.resolve({ session_status: "FINAL_CONFIRMATION", blueprint_version: 3, readiness: { score: 1, ready_to_finalize: true, reason: "Ready for confirmation." } }); },
+    handoff: function (action) { return Promise.resolve({ session_status: action === "confirm" ? "FINALIZED" : "HANDED_OFF", blueprint_version: 4 }); },
+    revise: function () { return Promise.resolve({ session_status: "QUESTIONING", blueprint_version: 5 }); }
+  };
+  function run(op) {
+    setBusy(true);
+    feedback("", false);
+    var driver = explicitMockEnabled() ? mockDriver : realDriver;
+    return op(driver).then(render).catch(function (err) { feedback(err.message, true); }).finally(function () { setBusy(false); syncButtons(); });
+  }
+  function initIntentForge() {
+    if (!$("prompt-input") || $("prompt-input").dataset.bound === "true") return;
+    $("prompt-input").dataset.bound = "true";
+    $("prompt-input").value = localStorage.getItem("loom.prompt_draft") || "";
+    $("answer-input").value = localStorage.getItem("loom.answer_draft") || "";
+    ["prompt-input", "answer-input"].forEach(function (id) {
+      var el = $(id);
+      el.addEventListener("input", function () {
+        localStorage.setItem(id === "prompt-input" ? "loom.prompt_draft" : "loom.answer_draft", el.value);
+        syncButtons();
+      });
+    });
+    $("btn-start-session").addEventListener("click", function () { run(function (d) { return d.start(); }); });
+    $("btn-submit-answer").addEventListener("click", function () { run(function (d) { return d.submit(); }); });
+    $("btn-finalize-now").addEventListener("click", function () { run(function (d) { return d.finalize(); }); });
+    $("btn-confirm-handoff").addEventListener("click", function () { run(function (d) { return d.handoff("confirm"); }); });
+    $("btn-accept-handoff").addEventListener("click", function () { run(function (d) { return d.handoff("accept"); }); });
+    $("btn-undo-draft").addEventListener("click", function () { $("answer-input").value = ""; localStorage.removeItem("loom.answer_draft"); syncButtons(); });
+    document.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-revise-question-id]");
+      if (!btn) return;
+      var editor = $("vision-revision-editor");
+      editor.dataset.questionId = btn.getAttribute("data-revise-question-id");
+      editor.value = btn.parentElement.textContent.replace(/^Revise/, "").trim();
+    });
+    syncButtons();
+    window.LoomIntentForgeDriver = { mode: explicitMockEnabled() ? "mock" : "api", real: realDriver, mock: mockDriver };
+  }
+  document.addEventListener("workspace-loaded", function (event) { if (event.detail.id === "intent-forge") initIntentForge(); });
+  if (document.readyState !== "loading") initIntentForge(); else document.addEventListener("DOMContentLoaded", initIntentForge);
+})();

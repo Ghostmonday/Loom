@@ -295,6 +295,13 @@ class AdaptiveQuestionEngine:
         question_id: str,
     ) -> dict[str, Any]:
         current = state.get("current_question") or {}
+        current_qid = str(current.get("question_id", "")).strip() if isinstance(current, dict) else ""
+        submitted_qid = question_id.strip()
+        if not current_qid:
+            raise ValueError("cannot submit answer without a current_question")
+        if submitted_qid and submitted_qid != current_qid:
+            raise ValueError("question_id does not match current_question")
+        question_id = current_qid
         domain = str(current.get("domain") or "functional_requirements")
 
         conflict_resolution = state.get("session_status") == "CONFLICT_RESOLUTION"

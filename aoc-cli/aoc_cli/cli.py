@@ -218,10 +218,10 @@ def grid_spawn(
         "auto",
         "--executor",
         "-e",
-        help="Execution coder: auto (prefer codex), codex, or grok.",
+        help="Execution coder: auto (prefer codex) or codex.",
     ),
 ) -> None:
-    """Spawn Codex or Grok agents per worker cell. Atomic sprint — no cancel."""
+    """Spawn Codex agents per worker cell. Atomic sprint — no cancel."""
     grid_spawn_cmd(workers, model, timeout, executor)
 
 

@@ -32,6 +32,25 @@ def test_api_key_correct_passes_auth(monkeypatch) -> None:
     assert response.status_code != 401
 
 
+def test_api_get_requires_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("GAIJINN_ALLOW_INSECURE_LOCAL", raising=False)
+    monkeypatch.setenv("GAIJINN_API_KEY", "super-secret-key")
+
+    client = TestClient(app)
+    response = client.get("/api/v1/grid/status")
+    assert response.status_code == 401
+    assert "Invalid or missing API key" in response.json()["detail"]
+
+
+def test_api_health_get_is_public(monkeypatch) -> None:
+    monkeypatch.delenv("GAIJINN_ALLOW_INSECURE_LOCAL", raising=False)
+    monkeypatch.setenv("GAIJINN_API_KEY", "super-secret-key")
+
+    client = TestClient(app)
+    response = client.get("/api/v1/health")
+    assert response.status_code == 200
+
+
 def test_insecure_local_mode_bypasses_auth(monkeypatch) -> None:
     monkeypatch.setenv("GAIJINN_ALLOW_INSECURE_LOCAL", "1")
     monkeypatch.setenv("GAIJINN_API_KEY", "super-secret-key")

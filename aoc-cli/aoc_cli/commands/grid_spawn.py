@@ -223,7 +223,7 @@ def _spawn_worker(
 
     with log_path.open("w", encoding="utf-8") as log_file:
         log_file.write(f"=== LOOM GRID SPAWN: {worker_name} ===\n")
-        log_file.write(f"Executor: codex\n")
+        log_file.write("Executor: codex\n")
         log_file.write(f"Model: {model}\n")
         log_file.write(f"CWD: {worker_dir}\n")
         log_file.write(f"Started: {time.ctime()}\n")
@@ -303,6 +303,12 @@ def grid_spawn_cmd(
         min=1,
         help="Seconds to wait for each worker before killing it.",
     ),
+    executor: str = typer.Option(
+        "auto",
+        "--executor",
+        "-e",
+        help="Execution coder: auto or codex.",
+    ),
 ) -> None:
     """Spawn Codex agents for each worker cell and run to completion.
 
@@ -310,6 +316,17 @@ def grid_spawn_cmd(
     All agents use the SAME model for consistent manifest interpretation.
     """
     try:
+        if not isinstance(timeout, int):
+            timeout = 3600
+        if not isinstance(executor, str):
+            executor = "auto"
+        normalized_executor = executor.strip().lower() or "auto"
+        if normalized_executor not in {"auto", "codex"}:
+            raise GridSpawnError(
+                f"Unsupported executor: {executor}",
+                cause="grid-spawn currently supports Codex execution only",
+                fix_command="loom grid-spawn --executor codex --workers N",
+            )
         state = _require_project_state()
         _ensure_grid_spawn_prerequisites(state, workers)
         manifest_path = state.workers_path / "manifest.json"
@@ -318,7 +335,7 @@ def grid_spawn_cmd(
 
         layout_mode, cols, rows = _grid_mode(workers)
         typer.echo(f"Grid layout: {layout_mode} ({cols}×{rows})")
-        typer.echo(f"Executor: codex")
+        typer.echo("Executor: codex")
         typer.echo(f"Model: {model}")
         typer.echo(f"Spawning {workers} agent{'s' if workers > 1 else ''} — atomic sprint, no cancel.")
         typer.echo("")
@@ -341,6 +358,7 @@ def grid_spawn_cmd(
             )
 
             from ..state import transition_worker_state
+
             transition_worker_state(manifest_path, worker_name, "executing")
 
             typer.echo(f"  ▶  Spawning {worker_name}...")

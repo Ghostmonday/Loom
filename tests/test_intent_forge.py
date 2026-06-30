@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import inspect
 import json
+import time
 from pathlib import Path
+from threading import Thread
 from unittest.mock import patch
 
 import pytest
@@ -111,6 +113,27 @@ def test_duplicate_answer_idempotency(forge_env) -> None:
     assert second.json()["blueprint_version"] == first.json()["blueprint_version"]
 
 
+def test_submit_answer_rejects_mismatched_question_id(forge_env) -> None:
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build inventory tracking", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    res = client.post(
+        f"/api/v1/intent-forge/sessions/{created['session_id']}/answers",
+        json={
+            "question_id": "wrong-question-id",
+            "answer": "Track SKU counts nightly.",
+            "idempotency_key": "wrong-question-id-001",
+            "expected_blueprint_version": created["blueprint_version"],
+        },
+        headers=_headers(),
+    )
+    assert res.status_code == 400
+    assert "question_id does not match current_question" in res.json()["detail"]
+
+
 def test_version_conflict_rejected(forge_env) -> None:
     client, service = forge_env
     created = client.post(
@@ -127,6 +150,40 @@ def test_version_conflict_rejected(forge_env) -> None:
             idempotency_key="conflict-key-001",
             expected_blueprint_version=0,
         )
+
+
+def test_concurrent_duplicate_pause_is_serialized(forge_env) -> None:
+    _client, service = forge_env
+    created = service.create_session(user_id="alice", prompt="Build a secure API gateway", tier="paid")
+    sid = created["session_id"]
+    version = created["blueprint_version"]
+    original_save = service.store.save
+
+    def slow_save(session_id: str, state: dict, *, expected_version: int | None = None) -> None:
+        if session_id == sid and expected_version == version:
+            time.sleep(0.05)
+        original_save(session_id, state, expected_version=expected_version)
+
+    service.store.save = slow_save  # type: ignore[method-assign]
+    results: list[tuple[str, str]] = []
+
+    def worker() -> None:
+        try:
+            state = service.pause(sid, idempotency_key="pause-same-key", expected_blueprint_version=version)
+            results.append(("OK", state["session_status"]))
+        except Exception as exc:  # pragma: no cover - assertion below reports the exception type
+            results.append((type(exc).__name__, str(exc)))
+
+    threads = [Thread(target=worker), Thread(target=worker)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert sorted(results) == [("OK", "PAUSED"), ("OK", "PAUSED")]
+    lines = service.store.events_path(sid).read_text(encoding="utf-8").splitlines()
+    pause_events = [json.loads(line) for line in lines if '"intent.session.paused"' in line]
+    assert len(pause_events) == 1
 
 
 def test_finalize_now_allows_unresolved(forge_env) -> None:
@@ -148,6 +205,36 @@ def test_finalize_now_allows_unresolved(forge_env) -> None:
     )
     assert res.status_code == 200
     assert res.json()["session_status"] == "FINAL_CONFIRMATION"
+
+
+def test_terminal_session_cannot_be_paused_or_resumed(forge_env) -> None:
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a note-taking CLI with markdown export", "tier": "free"},
+        headers=_headers(),
+    ).json()
+    handed = _handoff_free(client, created)
+    pause = client.post(
+        f"/api/v1/intent-forge/sessions/{handed['session_id']}/pause",
+        json={
+            "idempotency_key": "pause-terminal-001",
+            "expected_blueprint_version": handed["blueprint_version"],
+        },
+        headers=_headers(),
+    )
+    resume = client.post(
+        f"/api/v1/intent-forge/sessions/{handed['session_id']}/resume",
+        json={
+            "idempotency_key": "resume-terminal-001",
+            "expected_blueprint_version": handed["blueprint_version"],
+        },
+        headers=_headers(),
+    )
+    assert pause.status_code == 400
+    assert "cannot pause while session is HANDED_OFF" in pause.json()["detail"]
+    assert resume.status_code == 400
+    assert "cannot resume while session is HANDED_OFF" in resume.json()["detail"]
 
 
 def test_handoff_to_command_engine_url(forge_env) -> None:

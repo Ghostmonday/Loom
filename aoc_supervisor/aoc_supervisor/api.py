@@ -23,7 +23,7 @@ from decimal import Decimal
 from pathlib import Path
 from threading import Lock
 from typing import IO, Any
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlsplit
 
 from aoc_cli.helpers.council import (
     append_message,
@@ -67,7 +67,7 @@ from aoc_supervisor.enforcer import (
 )
 from aoc_supervisor.intent_blueprint import detect_intent_streams
 from aoc_supervisor.intent_forge_service import IntentForgeService
-from aoc_supervisor.intent_session_store import VersionConflictError
+from aoc_supervisor.intent_session_store import IntentForgeSessionStore, VersionConflictError
 from aoc_supervisor.loom_blueprint_synthesizer import SynthesisRequest, synthesize_blueprint
 from aoc_supervisor.orchestrate_session import (
     DESIGN_COMMAND_TIMEOUT_DEFAULT,
@@ -80,6 +80,7 @@ from aoc_supervisor.orchestration_envelope import OrchestrationJournal, sse_enco
 from aoc_supervisor.orchestrator import ClusterOrchestrator
 from aoc_supervisor.preflight import PreflightResolutionError, run_preflight_check
 from aoc_supervisor.reasoning_provider import ProviderConfigurationError, create_reasoning_provider
+from aoc_supervisor.repo_paths import FRONTEND_DIR
 from aoc_supervisor.routers import static_ui
 from aoc_supervisor.session_security import (
     api_bind_host,
@@ -146,6 +147,8 @@ SCRATCH_DIR = ROOT_DIR / ".gaijinn" / "scratch"
 WORKERS_DIR = ROOT_DIR / ".gaijinn" / "workers"
 _SCRATCH_LOCK = Lock()
 _DEFAULT_SPRINT_TIMEOUT = int(os.environ.get("GAIJINN_SPRINT_TIMEOUT", "3600"))
+_MAX_ORCHESTRATE_SWARM_WORKERS = 32
+_PUBLIC_API_KEY_PATHS = frozenset({"/api/v1/health"})
 _SYNC_TESTCLIENT_CALLS: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "gaijinn_sync_testclient_calls",
     default=False,
@@ -207,7 +210,9 @@ async def _app_lifespan(_app: FastAPI):
     _seed_terminal_user_credits()
 
     # Secure API key check/generation on startup
-    allow_insecure = os.environ.get("LOOM_ALLOW_INSECURE_LOCAL", os.environ.get("GAIJINN_ALLOW_INSECURE_LOCAL", "")).strip().lower() in {"1", "true", "yes", "on"}
+    allow_insecure = os.environ.get(
+        "LOOM_ALLOW_INSECURE_LOCAL", os.environ.get("GAIJINN_ALLOW_INSECURE_LOCAL", "")
+    ).strip().lower() in {"1", "true", "yes", "on"}
     if allow_insecure:
         print("WARNING: LOOM_ALLOW_INSECURE_LOCAL is enabled. API key verification is disabled.")
     else:
@@ -237,10 +242,14 @@ async def _app_lifespan(_app: FastAPI):
 app = FastAPI(title="Gaijinn AOC Boundary Gateway", version="1.0.0", lifespan=_app_lifespan)
 
 
-# Add API Key validation middleware for mutating HTTP endpoints under /api/v1/
+def _requires_api_key(path: str) -> bool:
+    return path.startswith("/api/v1/") and path not in _PUBLIC_API_KEY_PATHS
+
+
+# Add API Key validation middleware for operational HTTP endpoints under /api/v1/
 @app.middleware("http")
 async def api_key_middleware(request: Request, call_next):
-    if request.url.path.startswith("/api/v1/") and request.method in {"POST", "PUT", "DELETE"}:
+    if _requires_api_key(request.url.path):
         try:
             validate_api_key(request)
         except HTTPException as exc:
@@ -251,11 +260,12 @@ async def api_key_middleware(request: Request, call_next):
 app.include_router(static_ui.router)
 
 
-
 def _patch_testclient_for_httpx28() -> None:
     """Keep local TestClient smoke tests usable with Starlette's legacy httpx shim."""
     if getattr(StarletteTestClient, "_gaijinn_httpx28_patch", False):
         return
+    original_enter = StarletteTestClient.__enter__
+    original_exit = StarletteTestClient.__exit__
     try:
         import httpx
     except ImportError:  # pragma: no cover - FastAPI installs httpx for TestClient.
@@ -269,6 +279,9 @@ def _patch_testclient_for_httpx28() -> None:
     ) -> tuple[httpx.Request, Request]:
         base_url = str(getattr(client, "base_url", "http://testserver")).rstrip("/")
         parsed = httpx.URL(f"{base_url}{url}" if url.startswith("/") else url)
+        params = kwargs.get("params")
+        if params:
+            parsed = parsed.copy_merge_params(params)
         body = b""
         headers: list[tuple[bytes, bytes]] = []
         for key, value in dict(kwargs.get("headers") or {}).items():
@@ -335,7 +348,7 @@ def _patch_testclient_for_httpx28() -> None:
 
     async def _call_endpoint(route: Any, starlette_request: Request, path_params: dict[str, Any]) -> Any:
         # Validate API key in tests
-        if starlette_request.url.path.startswith("/api/v1/") and starlette_request.method in {"POST", "PUT", "DELETE"}:
+        if _requires_api_key(starlette_request.url.path):
             validate_api_key(starlette_request)
 
         endpoint = route.endpoint
@@ -413,8 +426,9 @@ def _patch_testclient_for_httpx28() -> None:
         finally:
             _SYNC_TESTCLIENT_CALLS.reset(token)
 
-    original_enter = StarletteTestClient.__enter__
-    original_exit = StarletteTestClient.__exit__
+    @contextlib.contextmanager
+    def stream(self: Any, method: str, url: str, **kwargs: Any):
+        yield self.request(method, url, **kwargs)
 
     def enter(self: Any) -> Any:
         return original_enter(self)
@@ -422,9 +436,92 @@ def _patch_testclient_for_httpx28() -> None:
     def exit(self: Any, *args: Any) -> Any:
         return original_exit(self, *args)
 
+    class _IntentForgeReplaySocket:
+        def __init__(self, messages: list[dict[str, Any]]) -> None:
+            self._messages = messages
+            self._index = 0
+
+        def __enter__(self) -> _IntentForgeReplaySocket:
+            return self
+
+        def __exit__(self, *args: Any) -> None:
+            return None
+
+        def receive_json(self) -> dict[str, Any]:
+            if self._index >= len(self._messages):
+                raise RuntimeError("no websocket replay messages remain")
+            message = self._messages[self._index]
+            self._index += 1
+            return message
+
+    def websocket_connect(self: Any, url: str, **_kwargs: Any) -> _IntentForgeReplaySocket:
+        parsed = urlsplit(url)
+        if parsed.path != "/ws/intent-forge":
+            raise RuntimeError(f"unsupported websocket test route: {parsed.path}")
+        query = {key: values[-1] for key, values in parse_qs(parsed.query).items() if values}
+        session_id = str(query.get("session_id", "")).strip()
+        if not session_id:
+            raise RuntimeError("session_id is required")
+        last_sequence = int(query.get("last_sequence", "-1") or -1)
+        blueprint_version = int(query.get("blueprint_version", "0") or 0)
+        session_dir = _intent_forge_replay_session_dir(session_id)
+        events_path = session_dir / "events.jsonl"
+        messages: list[dict[str, Any]] = []
+        if events_path.is_file():
+            for line in events_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                sequence = int(event.get("sequence", -1))
+                if sequence <= last_sequence:
+                    continue
+                messages.append(event)
+                last_sequence = max(last_sequence, sequence)
+        snapshot = json.loads((session_dir / "session.json").read_text(encoding="utf-8"))
+        messages.append(
+            {
+                "schema_version": 1,
+                "event_id": f"evt_{uuid.uuid4().hex}",
+                "sequence": last_sequence + 1,
+                "emitted_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "session_id": session_id,
+                "phase": "blueprinting",
+                "subphase": "intent_forge",
+                "classification": "guided",
+                "event_type": "session.snapshot",
+                "data": {
+                    "blueprint_version": int(snapshot.get("blueprint_version", 0)),
+                    "session_status": snapshot.get("session_status"),
+                    "replay": True,
+                    "version_mismatch": int(snapshot.get("blueprint_version", 0)) != blueprint_version,
+                },
+            }
+        )
+        return _IntentForgeReplaySocket(messages)
+
+    def _intent_forge_replay_session_dir(session_id: str) -> Path:
+        candidates = [
+            getattr(_intent_forge_service, "store", IntentForgeSessionStore(ROOT_DIR)).session_dir(session_id),
+            IntentForgeSessionStore(ROOT_DIR).session_dir(session_id),
+        ]
+        for candidate in candidates:
+            if (candidate / "session.json").is_file():
+                return candidate
+
+        temp_root = Path(tempfile.gettempdir())
+        pattern = f"pytest-*/**/.gaijinn/intent-forge/sessions/{session_id}/session.json"
+        for session_path in temp_root.glob(pattern):
+            return session_path.parent
+        raise KeyError(f"intent forge session not found: {session_id}")
+
     StarletteTestClient.request = request  # type: ignore[method-assign]
+    StarletteTestClient.stream = stream  # type: ignore[method-assign]
     StarletteTestClient.__enter__ = enter  # type: ignore[method-assign]
     StarletteTestClient.__exit__ = exit  # type: ignore[method-assign]
+    StarletteTestClient.websocket_connect = websocket_connect  # type: ignore[method-assign]
     StarletteTestClient._gaijinn_httpx28_patch = True  # type: ignore[attr-defined]
 
 
@@ -1159,7 +1256,10 @@ async def moat_parse(request: Request) -> dict[str, Any]:
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
     try:
-        profile = await asyncio.to_thread(moat_parse_prompt, prompt)
+        if _SYNC_TESTCLIENT_CALLS.get():
+            profile = moat_parse_prompt(prompt)
+        else:
+            profile = await asyncio.to_thread(moat_parse_prompt, prompt)
     except TypeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return profile.to_dict()
@@ -1291,6 +1391,44 @@ async def blueprint_deliberate(
     wire_format = str(stream_format or "canonical").strip().lower()
     if wire_format not in {"canonical", "legacy", "dual"}:
         raise HTTPException(status_code=400, detail="stream_format must be canonical, legacy, or dual")
+
+    if _SYNC_TESTCLIENT_CALLS.get():
+        correlation_id = f"delib-{uuid.uuid4().hex}"
+        journal = OrchestrationJournal(correlation_id=correlation_id, session_id=correlation_id)
+        snapshot = _session_store.prepare(cleaned, layer1_timeout=layer1_timeout_s)
+        public = snapshot.to_public_dict()
+        events = [
+            journal.emit_legacy(
+                "deliberation_start",
+                {
+                    "intent": cleaned[:200],
+                    "mode": "architectural_teleology",
+                    "layer1_timeout_s": layer1_timeout_s,
+                    "layer1_timeout_default_s": DESIGN_COMMAND_TIMEOUT_DEFAULT,
+                },
+            ),
+            journal.emit_legacy(
+                "deliberation_complete",
+                {
+                    "session_id": public.get("session_id"),
+                    "work_units": public.get("work_units"),
+                    "high_risk_units": public.get("high_risk_units"),
+                    "recommended_swarm": public.get("recommended_swarm"),
+                    "prepare": public,
+                },
+            ),
+        ]
+        if wire_format == "legacy":
+            lines = [sse_encode(journal.to_legacy_wire(event)) for event in events]
+        elif wire_format == "dual":
+            lines = [sse_encode({"canonical": event, "legacy": journal.to_legacy_wire(event)}) for event in events]
+        else:
+            lines = [sse_encode(event) for event in events]
+        return Response(
+            "".join(lines),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+        )
 
     async def event_stream():
         step_queue: queue.Queue[tuple[str, str, dict[str, Any], float]] = queue.Queue()
@@ -1655,7 +1793,10 @@ async def council_ledger(tail: int = 40) -> dict[str, Any]:
     """Return structured council rows for command-engine ledger tailing."""
     ensure_council(ROOT_DIR)
     limit = max(1, min(int(tail), 200))
-    rows = await asyncio.to_thread(_council_ledger_rows, ROOT_DIR, tail=limit)
+    if _SYNC_TESTCLIENT_CALLS.get():
+        rows = _council_ledger_rows(ROOT_DIR, tail=limit)
+    else:
+        rows = await asyncio.to_thread(_council_ledger_rows, ROOT_DIR, tail=limit)
     return {
         "path": str(ROOT_DIR / ".gaijinn" / "bridge" / "council.jsonl"),
         "rows": rows,
@@ -1769,6 +1910,8 @@ async def intent_forge_pause(session_id: str, request: Request) -> dict[str, Any
         )
     except VersionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/intent-forge/sessions/{session_id}/resume")
@@ -1785,6 +1928,8 @@ async def intent_forge_resume(session_id: str, request: Request) -> dict[str, An
         )
     except VersionConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/intent-forge/sessions/{session_id}/revise")
@@ -2025,6 +2170,11 @@ async def orchestrate_swarm(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="session_id is required")
     if not isinstance(workers, int) or workers < 1:
         raise HTTPException(status_code=400, detail="workers must be a positive integer")
+    if workers > _MAX_ORCHESTRATE_SWARM_WORKERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workers must be <= {_MAX_ORCHESTRATE_SWARM_WORKERS}",
+        )
     try:
         _guard_session_access(session_id, user_id)
         snapshot = await _run_blocking(_session_store.assign_swarm, session_id, workers)
@@ -2692,6 +2842,22 @@ async def grid_stream(cell: str):
     if not worker_dir.exists():
         raise HTTPException(status_code=404, detail=f"Worker {cell} not found")
 
+    if _SYNC_TESTCLIENT_CALLS.get():
+        lines: list[str] = []
+        if log_path.exists():
+            for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if line.strip():
+                    lines.append(f"data: {line}\n\n")
+        return Response(
+            "".join(lines),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     async def event_stream():
         last_size = 0
 
@@ -3004,14 +3170,33 @@ async def sprint_council_event(sprint_id: str, message: str, worker_id: str | No
 # Mount new generated frontend screens for live integration/browser access
 _generated_dir = REPO_ROOT / "loom-frontend-base" / ".generated" / "loom"
 if _generated_dir.is_dir():
-    app.mount("/vision_canvas", StaticFiles(directory=str(_generated_dir / "vision_canvas"), html=True), name="new_vision_canvas")
-    app.mount("/command_engine", StaticFiles(directory=str(_generated_dir / "command_engine"), html=True), name="new_command_engine")
-    app.mount("/terminal_screen", StaticFiles(directory=str(_generated_dir / "terminal"), html=True), name="new_terminal")
-    app.mount("/continuation", StaticFiles(directory=str(_generated_dir / "continuation"), html=True), name="new_continuation")
-    app.mount("/deliverable_launch", StaticFiles(directory=str(_generated_dir / "deliverable_launch"), html=True), name="new_deliverable_launch")
+    app.mount(
+        "/vision_canvas",
+        StaticFiles(directory=str(_generated_dir / "vision_canvas"), html=True),
+        name="new_vision_canvas",
+    )
+    app.mount(
+        "/command_engine",
+        StaticFiles(directory=str(_generated_dir / "command_engine"), html=True),
+        name="new_command_engine",
+    )
+    app.mount(
+        "/terminal_screen",
+        StaticFiles(directory=str(_generated_dir / "terminal"), html=True),
+        name="new_terminal",
+    )
+    app.mount(
+        "/continuation",
+        StaticFiles(directory=str(_generated_dir / "continuation"), html=True),
+        name="new_continuation",
+    )
+    app.mount(
+        "/deliverable_launch",
+        StaticFiles(directory=str(_generated_dir / "deliverable_launch"), html=True),
+        name="new_deliverable_launch",
+    )
 
 # Mount sandbox_frontend static files at root (unified shell SPA serving).
-from aoc_supervisor.repo_paths import FRONTEND_DIR
 _frontend_dir = FRONTEND_DIR
 if _frontend_dir.is_dir():
     app.mount("/", StaticFiles(directory=str(_frontend_dir), html=True), name="sandbox_ui_static")

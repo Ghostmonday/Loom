@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from aoc_cli import cli as cli_module
 from aoc_cli.cli import app
 from aoc_cli.commands import grid_spawn as grid_spawn_module
 from aoc_cli.errors import GridSpawnError
@@ -302,6 +303,21 @@ def test_grid_spawn_timeout_kills_worker_and_updates_manifest(tmp_path, monkeypa
     manifest = json.loads((state.workers_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["worker_details"][0]["status"] == "timed_out"
     assert manifest["sprint"]["timeout_seconds"] == 1
+
+
+def test_grid_spawn_cli_passes_executor_argument() -> None:
+    with patch.object(cli_module, "grid_spawn_cmd") as stub:
+        result = runner.invoke(app, ["grid-spawn", "--workers", "1", "--executor", "auto"], color=False)
+
+    assert result.exit_code == 0, result.output
+    stub.assert_called_once_with(1, "grok-composer-2.5-fast", 3600, "auto")
+
+
+def test_grid_spawn_rejects_unsupported_executor() -> None:
+    with pytest.raises(Exception) as exc:
+        grid_spawn_module.grid_spawn_cmd(workers=1, model="grok-composer-2.5-fast", timeout=1, executor="grok")
+
+    assert "Unsupported executor" in str(exc.value)
 
 
 def test_grid_spawn_warns_on_manifest_update_failure(tmp_path, monkeypatch) -> None:

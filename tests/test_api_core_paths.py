@@ -66,6 +66,7 @@ def test_prepare_greenfield_returns_public_stats(mock_grid_client, monkeypatch: 
             blueprint_path.write_text(json.dumps(blueprint, indent=2) + "\n", encoding="utf-8")
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_gaijinn", fake_run)
 
     response = client.post(
@@ -175,6 +176,19 @@ def test_swarm_rejects_invalid_workers(mock_grid_client, workers: object) -> Non
     assert response.json()["detail"] == "workers must be a positive integer"
 
 
+def test_swarm_rejects_excessive_workers(mock_grid_client) -> None:
+    """POST /orchestrate/swarm enforces the system worker ceiling."""
+    client, _workers, _tmp, store = mock_grid_client
+    snapshot = store.prepare("Terminal smoke test project", owner_user_id="terminal-user")
+    response = client.post(
+        "/api/v1/orchestrate/swarm",
+        json={"session_id": snapshot.session_id, "workers": 33},
+        headers={"X-User-Id": "terminal-user"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "workers must be <= 32"
+
+
 # ── Orchestrate advance-phase ───────────────────────────────────────────────
 
 
@@ -250,6 +264,7 @@ def test_advance_phase_success_reblueprints_next_phase(mock_grid_client, monkeyp
         return 1, 0, titles, "intent", titles
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_blueprint_pipeline", fake_pipeline)
 
     response = client.post(
@@ -502,6 +517,7 @@ def test_orchestrate_swarm_success_arms_workers(mock_grid_client, monkeypatch: p
             (workers_dir / "worker-001").mkdir(exist_ok=True)
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_gaijinn", fake_run)
 
     prepared = client.post(
@@ -535,6 +551,7 @@ def test_orchestrate_session_get_returns_public_snapshot(mock_grid_client, monke
             (project_root / ".gaijinn" / "blueprint.json").write_text(json.dumps(blueprint), encoding="utf-8")
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_gaijinn", fake_run)
     prepared = client.post(
         "/api/v1/orchestrate/prepare",
@@ -568,6 +585,7 @@ def test_prepare_after_intent_forge_handoff_succeeds(forge_client, monkeypatch: 
             (project_root / ".gaijinn" / "blueprint.json").write_text(json.dumps(blueprint), encoding="utf-8")
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_gaijinn", fake_run)
 
     created = client.post(
@@ -626,6 +644,7 @@ def test_grid_merge_status_for_prepared_session(mock_grid_client, monkeypatch: p
             (project_root / ".gaijinn" / "blueprint.json").write_text(json.dumps(blueprint), encoding="utf-8")
 
     import aoc_supervisor.api as api
+
     monkeypatch.setitem(api._session_store.advance_phase.__globals__, "_run_gaijinn", fake_run)
     prepared = client.post(
         "/api/v1/orchestrate/prepare",

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import tempfile
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +49,8 @@ class IntentForgeSessionStore:
     def __init__(self, host_root: Path) -> None:
         self.host_root = host_root.resolve()
         self.root = self.host_root / ".gaijinn" / "intent-forge" / "sessions"
+        self._thread_locks: dict[str, threading.RLock] = {}
+        self._thread_locks_guard = threading.Lock()
 
     def session_dir(self, session_id: str) -> Path:
         return self.root / session_id
@@ -60,6 +66,19 @@ class IntentForgeSessionStore:
 
     def versions_dir(self, session_id: str) -> Path:
         return self.session_dir(session_id) / "versions"
+
+    @contextmanager
+    def session_lock(self, session_id: str) -> Iterator[None]:
+        with self._thread_locks_guard:
+            thread_lock = self._thread_locks.setdefault(session_id, threading.RLock())
+        lock_path = self.session_dir(session_id) / ".session.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with thread_lock, lock_path.open("a+", encoding="utf-8") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def load(self, session_id: str) -> dict[str, Any]:
         path = self.session_path(session_id)

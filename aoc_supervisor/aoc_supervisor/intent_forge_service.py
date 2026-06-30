@@ -89,7 +89,6 @@ class IntentForgeService:
         conflict_resolution: bool = False,
     ) -> None:
         from aoc_supervisor.adaptive_question_engine import get_default_engine
-        from aoc_supervisor.evidence_state import build_analysis_snapshot
         from aoc_supervisor.reasoning_provider import ProviderFailureError
 
         current_q = state.get("current_question") or {}
@@ -111,12 +110,8 @@ class IntentForgeService:
 
         try:
             engine = get_default_engine()
-            snapshot = build_analysis_snapshot(state)
-            raw = engine.provider.analyze(snapshot)
-            from aoc_supervisor.reasoning_schema import enforce_analysis_policy, parse_analysis_output
-
-            output = parse_analysis_output(raw)
-            output = enforce_analysis_policy(output, snapshot)
+            result = engine.analyze(state, mutate_state=True)
+            output = result.output
 
             # Mark any previously raw-appended requirements for this question as stale
             for req in state.get("confirmed_requirements", []):
@@ -318,65 +313,78 @@ class IntentForgeService:
         expected_blueprint_version: int,
         action: str = "answer",
     ) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        status = str(state.get("session_status", ""))
-        if status not in {"QUESTIONING", "CONFLICT_RESOLUTION"}:
-            raise ValueError(f"cannot submit answer while session is {status}")
-        current = state.get("current_question") or {}
-        domain = str(current.get("domain", "functional_requirements"))
-        if action == "skip" and status == "QUESTIONING":
-            coverage = state.setdefault("domain_coverage", {})
-            if isinstance(coverage, dict):
-                coverage.setdefault(domain, {"addressed": True, "na": False})
-                coverage[domain]["addressed"] = True
-            state["current_question"] = None
-        else:
-            self._apply_answer_to_state(
-                state,
-                question_id=question_id or str(current.get("question_id", "")),
-                answer=answer,
-                domain=domain,
-                conflict_resolution=status == "CONFLICT_RESOLUTION",
-            )
-        bump_blueprint_version(state)
-        merge_contradictions(state, detect_contradictions(state))
-        unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-        if unresolved:
-            state["session_status"] = "CONFLICT_RESOLUTION"
-            primary = unresolved[0]
-            state["current_question"] = {
-                "question_id": question_id or str(current.get("question_id", "")),
-                "domain": "conflict_resolution",
-                "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
-                "options": resolution_options(primary, state),
-            }
-            self.store.save(session_id, state, expected_version=expected_blueprint_version)
-            self._emit(session_id, "blueprint.contradiction.detected", state, {"contradiction_id": primary.get("id")})
-            return public_session_view(state)
-        if should_stop_questioning(state):
-            state["session_status"] = "VALIDATING"
-        else:
-            next_question = build_next_question(state)
-            state["current_question"] = next_question
-            if next_question is None and state.get("analysis_recovery"):
-                state["session_status"] = "ANALYSIS_BLOCKED"
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            status = str(state.get("session_status", ""))
+            if status not in {"QUESTIONING", "CONFLICT_RESOLUTION"}:
+                raise ValueError(f"cannot submit answer while session is {status}")
+            current = state.get("current_question") or {}
+            current_qid = str(current.get("question_id", "")).strip() if isinstance(current, dict) else ""
+            submitted_qid = question_id.strip()
+            if not current_qid:
+                raise ValueError("cannot submit answer without a current_question")
+            if submitted_qid and submitted_qid != current_qid:
+                raise ValueError("question_id does not match current_question")
+            question_id = current_qid
+            domain = str(current.get("domain", "functional_requirements"))
+            if action == "skip" and status == "QUESTIONING":
+                coverage = state.setdefault("domain_coverage", {})
+                if isinstance(coverage, dict):
+                    coverage.setdefault(domain, {"addressed": True, "na": False})
+                    coverage[domain]["addressed"] = True
+                state["current_question"] = None
             else:
-                state["session_status"] = "QUESTIONING"
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "intent.answer.recorded", state, {"question_id": question_id, "action": action})
-        if state.get("current_question"):
-            q = state["current_question"]
-            self._emit(
-                session_id,
-                "intent.question.presented",
-                state,
-                {"question_id": q["question_id"], "domain": q.get("domain"), "text": q.get("text")},
-            )
-        return public_session_view(state)
+                self._apply_answer_to_state(
+                    state,
+                    question_id=question_id,
+                    answer=answer,
+                    domain=domain,
+                    conflict_resolution=status == "CONFLICT_RESOLUTION",
+                )
+            bump_blueprint_version(state)
+            merge_contradictions(state, detect_contradictions(state))
+            unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
+            if unresolved:
+                state["session_status"] = "CONFLICT_RESOLUTION"
+                primary = unresolved[0]
+                state["current_question"] = {
+                    "question_id": question_id,
+                    "domain": "conflict_resolution",
+                    "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
+                    "options": resolution_options(primary, state),
+                }
+                self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                self._emit(
+                    session_id,
+                    "blueprint.contradiction.detected",
+                    state,
+                    {"contradiction_id": primary.get("id")},
+                )
+                return public_session_view(state)
+            if should_stop_questioning(state):
+                state["session_status"] = "VALIDATING"
+            else:
+                next_question = build_next_question(state)
+                state["current_question"] = next_question
+                if next_question is None and state.get("analysis_recovery"):
+                    state["session_status"] = "ANALYSIS_BLOCKED"
+                else:
+                    state["session_status"] = "QUESTIONING"
+            self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(session_id, "intent.answer.recorded", state, {"question_id": question_id, "action": action})
+            if state.get("current_question"):
+                q = state["current_question"]
+                self._emit(
+                    session_id,
+                    "intent.question.presented",
+                    state,
+                    {"question_id": q["question_id"], "domain": q.get("domain"), "text": q.get("text")},
+                )
+            return public_session_view(state)
 
     def revise_answer(
         self,
@@ -387,118 +395,127 @@ class IntentForgeService:
         idempotency_key: str,
         expected_blueprint_version: int,
     ) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        status = str(state.get("session_status", ""))
-        if status not in {"QUESTIONING", "PAUSED", "VALIDATING", "FINAL_CONFIRMATION"}:
-            raise ValueError(f"cannot revise while session is {status}")
-        original = next(
-            (
-                entry
-                for entry in state.get("questions_and_answers", [])
-                if isinstance(entry, dict)
-                and str(entry.get("question_id", "")) == question_id
-                and not entry.get("superseded_by")
-            ),
-            None,
-        )
-        if original is None:
-            raise ValueError(f"question_id not found or already superseded: {question_id}")
-        revision_id = new_question_id()
-        original["superseded_by"] = revision_id
-        domain = str(original.get("domain", "functional_requirements"))
-        self._invalidate_question_dependents(state, question_id)
-        state.setdefault("questions_and_answers", []).append(
-            {
-                "question_id": revision_id,
-                "revises": question_id,
-                "text": original.get("text", ""),
-                "answer": answer.strip(),
-                "domain": domain,
-                "timestamp": state.get("updated_at"),
-            }
-        )
-        self._apply_answer_to_state(
-            state,
-            question_id=revision_id,
-            answer=answer,
-            domain=domain,
-        )
-        bump_blueprint_version(state)
-        merge_contradictions(state, detect_contradictions(state))
-        unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-        if unresolved:
-            state["session_status"] = "CONFLICT_RESOLUTION"
-            primary = unresolved[0]
-            state["current_question"] = {
-                "question_id": revision_id,
-                "domain": "conflict_resolution",
-                "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
-                "options": resolution_options(primary, state),
-            }
-        elif should_stop_questioning(state):
-            state["session_status"] = "VALIDATING"
-            state["current_question"] = None
-        else:
-            next_question = build_next_question(state)
-            state["current_question"] = next_question
-            if next_question is None and state.get("analysis_recovery"):
-                state["session_status"] = "ANALYSIS_BLOCKED"
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            status = str(state.get("session_status", ""))
+            if status not in {"QUESTIONING", "PAUSED", "VALIDATING", "FINAL_CONFIRMATION"}:
+                raise ValueError(f"cannot revise while session is {status}")
+            original = next(
+                (
+                    entry
+                    for entry in state.get("questions_and_answers", [])
+                    if isinstance(entry, dict)
+                    and str(entry.get("question_id", "")) == question_id
+                    and not entry.get("superseded_by")
+                ),
+                None,
+            )
+            if original is None:
+                raise ValueError(f"question_id not found or already superseded: {question_id}")
+            revision_id = new_question_id()
+            original["superseded_by"] = revision_id
+            domain = str(original.get("domain", "functional_requirements"))
+            self._invalidate_question_dependents(state, question_id)
+            state.setdefault("questions_and_answers", []).append(
+                {
+                    "question_id": revision_id,
+                    "revises": question_id,
+                    "text": original.get("text", ""),
+                    "answer": answer.strip(),
+                    "domain": domain,
+                    "timestamp": state.get("updated_at"),
+                }
+            )
+            self._apply_answer_to_state(
+                state,
+                question_id=revision_id,
+                answer=answer,
+                domain=domain,
+            )
+            bump_blueprint_version(state)
+            merge_contradictions(state, detect_contradictions(state))
+            unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
+            if unresolved:
+                state["session_status"] = "CONFLICT_RESOLUTION"
+                primary = unresolved[0]
+                state["current_question"] = {
+                    "question_id": revision_id,
+                    "domain": "conflict_resolution",
+                    "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
+                    "options": resolution_options(primary, state),
+                }
+            elif should_stop_questioning(state):
+                state["session_status"] = "VALIDATING"
+                state["current_question"] = None
             else:
-                state["session_status"] = "QUESTIONING"
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(
-            session_id,
-            "intent.answer.revised",
-            state,
-            {"question_id": question_id, "revision_id": revision_id},
-        )
-        telemetry = export_optional_telemetry(state)
-        if telemetry:
-            self._emit(session_id, "intent.telemetry.aggregate", state, telemetry)
-        return public_session_view(state)
-
-    def pause(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        state["session_status"] = "PAUSED"
-        bump_blueprint_version(state)
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "intent.session.paused", state, {})
-        return public_session_view(state)
-
-    def resume(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-        if state.get("session_status") == "ANALYSIS_BLOCKED":
-            state["session_status"] = "QUESTIONING"
-            next_question = build_next_question(state)
-            state["current_question"] = next_question
-            if next_question is None and state.get("analysis_recovery"):
-                state["session_status"] = "ANALYSIS_BLOCKED"
-        elif unresolved:
-            state["session_status"] = "CONFLICT_RESOLUTION"
-        else:
-            state["session_status"] = "QUESTIONING"
-            if not state.get("current_question"):
                 next_question = build_next_question(state)
                 state["current_question"] = next_question
                 if next_question is None and state.get("analysis_recovery"):
                     state["session_status"] = "ANALYSIS_BLOCKED"
-        bump_blueprint_version(state)
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "intent.session.resumed", state, {})
-        return public_session_view(state)
+                else:
+                    state["session_status"] = "QUESTIONING"
+            self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(
+                session_id,
+                "intent.answer.revised",
+                state,
+                {"question_id": question_id, "revision_id": revision_id},
+            )
+            telemetry = export_optional_telemetry(state)
+            if telemetry:
+                self._emit(session_id, "intent.telemetry.aggregate", state, telemetry)
+            return public_session_view(state)
+
+    def pause(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            status = str(state.get("session_status", ""))
+            if status in {"FINAL_CONFIRMATION", "FINALIZING", "FINALIZED", "HANDED_OFF"}:
+                raise ValueError(f"cannot pause while session is {status}")
+            state["session_status"] = "PAUSED"
+            bump_blueprint_version(state)
+            self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(session_id, "intent.session.paused", state, {})
+            return public_session_view(state)
+
+    def resume(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            status = str(state.get("session_status", ""))
+            if status in {"FINAL_CONFIRMATION", "FINALIZING", "FINALIZED", "HANDED_OFF"}:
+                raise ValueError(f"cannot resume while session is {status}")
+            unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
+            if status == "ANALYSIS_BLOCKED":
+                state["session_status"] = "QUESTIONING"
+                next_question = build_next_question(state)
+                state["current_question"] = next_question
+                if next_question is None and state.get("analysis_recovery"):
+                    state["session_status"] = "ANALYSIS_BLOCKED"
+            elif unresolved:
+                state["session_status"] = "CONFLICT_RESOLUTION"
+            else:
+                state["session_status"] = "QUESTIONING"
+                if not state.get("current_question"):
+                    next_question = build_next_question(state)
+                    state["current_question"] = next_question
+                    if next_question is None and state.get("analysis_recovery"):
+                        state["session_status"] = "ANALYSIS_BLOCKED"
+            bump_blueprint_version(state)
+            self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(session_id, "intent.session.resumed", state, {})
+            return public_session_view(state)
 
     def finalize(
         self,
@@ -508,74 +525,77 @@ class IntentForgeService:
         expected_blueprint_version: int,
         force: bool = False,
     ) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        overridden_blockers: list[str] = []
-        if force:
-            strict_validation = validate_blueprint_state(state, finalize=True)
-            overridden_blockers = list(strict_validation.blocking_items)
-            structural_errors: list[str] = []
-            contradictions = [
-                c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")
-            ]
-            if contradictions:
-                structural_errors.append(f"{len(contradictions)} unresolved contradictions remain")
-            stale_nodes = [
-                n for n in state.get("blueprint_graph", {}).get("nodes", []) if isinstance(n, dict) and n.get("stale")
-            ]
-            if stale_nodes:
-                structural_errors.append(f"{len(stale_nodes)} stale graph nodes remain")
-            if structural_errors:
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            overridden_blockers: list[str] = []
+            if force:
+                strict_validation = validate_blueprint_state(state, finalize=True)
+                overridden_blockers = list(strict_validation.blocking_items)
+                structural_errors: list[str] = []
+                contradictions = [
+                    c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")
+                ]
+                if contradictions:
+                    structural_errors.append(f"{len(contradictions)} unresolved contradictions remain")
+                stale_nodes = [
+                    n
+                    for n in state.get("blueprint_graph", {}).get("nodes", [])
+                    if isinstance(n, dict) and n.get("stale")
+                ]
+                if stale_nodes:
+                    structural_errors.append(f"{len(stale_nodes)} stale graph nodes remain")
+                if structural_errors:
+                    state["session_status"] = "QUESTIONING"
+                    state["current_question"] = {
+                        "question_id": "finalize_blocked",
+                        "text": "Structural issues prevent finalization even with force.",
+                        "domain": "validation",
+                        "blocking_items": structural_errors,
+                    }
+                    bump_blueprint_version(state)
+                    self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                    return public_session_view(state)
+                for item in state.get("unresolved_items", []):
+                    if isinstance(item, dict) and item.get("blocking"):
+                        item["blocking"] = False
+            validation = validate_blueprint_state(state, finalize=not force)
+            if not validation.ok:
+                if not force:
+                    state["session_status"] = "QUESTIONING"
+                    state["current_question"] = build_next_question(state) or {
+                        "question_id": "finalize_blocked",
+                        "text": "Resolve blocking validation items before finalizing.",
+                        "domain": "validation",
+                        "blocking_items": validation.blocking_items,
+                    }
+                    bump_blueprint_version(state)
+                    self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                    return public_session_view(state)
                 state["session_status"] = "QUESTIONING"
                 state["current_question"] = {
                     "question_id": "finalize_blocked",
-                    "text": "Structural issues prevent finalization even with force.",
-                    "domain": "validation",
-                    "blocking_items": structural_errors,
-                }
-                bump_blueprint_version(state)
-                self.store.save(session_id, state, expected_version=expected_blueprint_version)
-                return public_session_view(state)
-            for item in state.get("unresolved_items", []):
-                if isinstance(item, dict) and item.get("blocking"):
-                    item["blocking"] = False
-        validation = validate_blueprint_state(state, finalize=not force)
-        if not validation.ok:
-            if not force:
-                state["session_status"] = "QUESTIONING"
-                state["current_question"] = build_next_question(state) or {
-                    "question_id": "finalize_blocked",
-                    "text": "Resolve blocking validation items before finalizing.",
+                    "text": "Validation issues prevent finalization even with force.",
                     "domain": "validation",
                     "blocking_items": validation.blocking_items,
                 }
                 bump_blueprint_version(state)
                 self.store.save(session_id, state, expected_version=expected_blueprint_version)
                 return public_session_view(state)
-            state["session_status"] = "QUESTIONING"
-            state["current_question"] = {
-                "question_id": "finalize_blocked",
-                "text": "Validation issues prevent finalization even with force.",
-                "domain": "validation",
-                "blocking_items": validation.blocking_items,
-            }
+            state["session_status"] = "FINAL_CONFIRMATION"
+            if force:
+                state["forced_finalization"] = {
+                    "forced": True,
+                    "overridden_blockers": overridden_blockers,
+                    "timestamp": state.get("updated_at"),
+                }
             bump_blueprint_version(state)
             self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(session_id, "blueprint.validation.completed", state, {"ok": validation.ok, "forced": force})
             return public_session_view(state)
-        state["session_status"] = "FINAL_CONFIRMATION"
-        if force:
-            state["forced_finalization"] = {
-                "forced": True,
-                "overridden_blockers": overridden_blockers,
-                "timestamp": state.get("updated_at"),
-            }
-        bump_blueprint_version(state)
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "blueprint.validation.completed", state, {"ok": validation.ok, "forced": force})
-        return public_session_view(state)
 
     def confirm_handoff(
         self,
@@ -585,39 +605,40 @@ class IntentForgeService:
         expected_blueprint_version: int,
         confirmation: str = "",
     ) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
-            return public_session_view(state)
-        if confirmation.strip():
-            state.setdefault("decisions", []).append(
-                {
-                    "id": new_element_id("DEC"),
-                    "text": confirmation.strip(),
-                    "rationale": "final_confirmation",
-                }
-            )
-        forced = state.get("forced_finalization", {}) if isinstance(state.get("forced_finalization"), dict) else {}
-        validation = validate_blueprint_state(state, finalize=not forced.get("forced"))
-        if not validation.ok:
-            state["session_status"] = "QUESTIONING"
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            if confirmation.strip():
+                state.setdefault("decisions", []).append(
+                    {
+                        "id": new_element_id("DEC"),
+                        "text": confirmation.strip(),
+                        "rationale": "final_confirmation",
+                    }
+                )
+            forced = state.get("forced_finalization", {}) if isinstance(state.get("forced_finalization"), dict) else {}
+            validation = validate_blueprint_state(state, finalize=not forced.get("forced"))
+            if not validation.ok:
+                state["session_status"] = "QUESTIONING"
+                bump_blueprint_version(state)
+                self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                raise ValueError("; ".join(validation.blocking_items))
+            state["session_status"] = "FINALIZING"
+            artifact = compile_rich_artifact(state, provisional=False)
+            executable = compile_executable_projection(state)
+            state["artifact"] = artifact
+            state["executable_projection"] = executable
+            # C22: emit canonical teleology.json alongside the compiled blueprint
+            write_teleology_artifact(self.store.host_root, state)
+            state["session_status"] = "FINALIZED"
+            state["finalized_at"] = state.get("updated_at")
             bump_blueprint_version(state)
             self.store.save(session_id, state, expected_version=expected_blueprint_version)
-            raise ValueError("; ".join(validation.blocking_items))
-        state["session_status"] = "FINALIZING"
-        artifact = compile_rich_artifact(state, provisional=False)
-        executable = compile_executable_projection(state)
-        state["artifact"] = artifact
-        state["executable_projection"] = executable
-        # C22: emit canonical teleology.json alongside the compiled blueprint
-        write_teleology_artifact(self.store.host_root, state)
-        state["session_status"] = "FINALIZED"
-        state["finalized_at"] = state.get("updated_at")
-        bump_blueprint_version(state)
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "blueprint.finalized", state, {"artifact_version": artifact.get("schema_version")})
-        return public_session_view(state)
+            self._emit(session_id, "blueprint.finalized", state, {"artifact_version": artifact.get("schema_version")})
+            return public_session_view(state)
 
     def accept_handoff(
         self,
@@ -626,19 +647,20 @@ class IntentForgeService:
         idempotency_key: str,
         expected_blueprint_version: int,
     ) -> dict[str, Any]:
-        state = self.store.load(session_id)
-        try:
-            self.store.claim_idempotency(state, idempotency_key)
-        except IdempotencyReplayError:
+        with self.store.session_lock(session_id):
+            state = self.store.load(session_id)
+            try:
+                self.store.claim_idempotency(state, idempotency_key)
+            except IdempotencyReplayError:
+                return public_session_view(state)
+            if state.get("session_status") != "FINALIZED":
+                raise ValueError("session must be FINALIZED before handoff")
+            state["session_status"] = "HANDED_OFF"
+            state["handed_off_at"] = state.get("updated_at")
+            bump_blueprint_version(state)
+            self.store.save(session_id, state, expected_version=expected_blueprint_version)
+            self._emit(session_id, "blueprint.handoff.accepted", state, {})
             return public_session_view(state)
-        if state.get("session_status") != "FINALIZED":
-            raise ValueError("session must be FINALIZED before handoff")
-        state["session_status"] = "HANDED_OFF"
-        state["handed_off_at"] = state.get("updated_at")
-        bump_blueprint_version(state)
-        self.store.save(session_id, state, expected_version=expected_blueprint_version)
-        self._emit(session_id, "blueprint.handoff.accepted", state, {})
-        return public_session_view(state)
 
     def validation_result(self, session_id: str) -> ValidationResult:
         return validate_blueprint_state(self.store.load(session_id), finalize=True)

@@ -49,7 +49,15 @@ dev = [
 loom = "aoc_cli.cli:app"
 
 [tool.setuptools]
-packages = ["aoc_cli", "aoc_cli.commands", "aoc_cli.helpers", "aoc_supervisor"]
+py-modules = ["loom_resolution_engine_v3"]
+packages = [
+    "aoc_cli",
+    "aoc_cli.commands",
+    "aoc_cli.helpers",
+    "aoc_cli.resolution_v3",
+    "aoc_supervisor",
+    "aoc_supervisor.routers",
+]
 
 [tool.setuptools.package-dir]
 aoc_cli = "aoc-cli/aoc_cli"

@@ -7,6 +7,7 @@ from loom_resolution_engine_v3 import (
     ConstraintGraph,
     Edge,
     EngineStatus,
+    Locus,
     Modality,
     Node,
     Status,
@@ -114,6 +115,97 @@ def test_honest_stuck_ambiguity() -> None:
     assert result["psi_trace"] == [(0, (1, 0, 0, 0)), (1, (0, 1, 0, 0))]
 
 
+def _target_domain_case(edges: list[tuple[str, str]]) -> tuple[ConstraintGraph, dict]:
+    cg = ConstraintGraph()
+    for source, _ in edges:
+        cg.add_node(Node(source, Status.KNOWN, "service", 1))
+    for source, label in edges:
+        cg.add_edge(Edge(source, "Target", Modality.REQ, label))
+
+    result = resolve(cg)
+    return cg, result
+
+
+def test_a1_incompatible_target_domains_are_order_independent() -> None:
+    first_cg, first = _target_domain_case([("Writer", "writes_to"), ("Caller", "calls")])
+    second_cg, second = _target_domain_case([("Caller", "calls"), ("Writer", "writes_to")])
+
+    for cg, result in [(first_cg, first), (second_cg, second)]:
+        assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=1)
+        assert cg.nodes["Target"].status == Status.LATENT_UNRESOLVED
+        assert cg.nodes["Target"].domain == set()
+        assert cg.nodes["Target"].type is None
+        assert any(
+            "target 'Target' has contradictory required type domains" in error for error in result["diagnostics"]
+        )
+
+    assert first["status"] == second["status"]
+    assert first["valid"] == second["valid"]
+    assert first_cg.nodes["Target"].domain == second_cg.nodes["Target"].domain
+
+
+def test_a1_compatible_target_domains_are_order_independent() -> None:
+    first_cg, first = _target_domain_case([("Auditor", "flushes_to"), ("Caller", "calls")])
+    second_cg, second = _target_domain_case([("Caller", "calls"), ("Auditor", "flushes_to")])
+
+    for cg, result in [(first_cg, first), (second_cg, second)]:
+        assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=2)
+        assert cg.nodes["Target"].status == Status.KNOWN
+        assert cg.nodes["Target"].type == "service"
+
+    assert first["status"] == second["status"]
+    assert first_cg.nodes["Target"].type == second_cg.nodes["Target"].type
+
+
+def test_a1_repeated_compatible_constraints_materialize_one_target() -> None:
+    cg, result = _target_domain_case([("CallerA", "calls"), ("CallerB", "calls")])
+
+    assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=2)
+    assert list(node_id for node_id in cg.nodes if node_id == "Target") == ["Target"]
+    assert cg.nodes["Target"].status == Status.KNOWN
+    assert cg.nodes["Target"].type == "service"
+
+
+def test_a1_undeclared_label_materializes_empty_domain() -> None:
+    cg, result = _target_domain_case([("Source", "unknown_label")])
+
+    assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=1)
+    assert cg.nodes["Target"].status == Status.LATENT_UNRESOLVED
+    assert cg.nodes["Target"].domain == set()
+    assert cg.nodes["Target"].type is None
+    assert any(
+        "target 'Target' uses undeclared schema labels: ['unknown_label']" in error for error in result["diagnostics"]
+    )
+
+
+def test_a1_declared_plus_undeclared_label_does_not_infer_type() -> None:
+    cg, result = _target_domain_case([("Caller", "calls"), ("Mystery", "unknown_label")])
+
+    assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=1)
+    assert cg.nodes["Target"].status == Status.LATENT_UNRESOLVED
+    assert cg.nodes["Target"].domain == set()
+    assert cg.nodes["Target"].type is None
+    assert any(
+        "target 'Target' uses undeclared schema labels: ['unknown_label']" in error for error in result["diagnostics"]
+    )
+
+
+def test_a1_requeues_touching_edges_so_b1_fires() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("Source", Status.KNOWN, "service", 1))
+    cg.add_edge(Edge("Source", "Target", Modality.REQ, "calls"))
+    cg.add_edge(Edge("Source", "Target", Modality.FORBID, "calls"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=3)
+    assert cg.nodes["Target"].status == Status.KNOWN
+    assert cg.nodes["Target"].type == "service"
+    assert not cg.edges[0].active
+    assert cg.edges[1].active
+    assert any("[B1] clash on Source->Target 'calls'" in line for line in result["log"])
+
+
 def test_injected_engine_fault() -> None:
     cg = ConstraintGraph()
     cg.add_node(Node("OrderService", Status.KNOWN, "service", 1))
@@ -191,8 +283,20 @@ def test_urgent_promotion_cannot_be_downgraded() -> None:
     worklist.push("z", URGENT)
     worklist.push("z", NORMAL)
     worklist.push("a", NORMAL)
-    assert worklist.pop() == "z"
-    assert worklist.pop() == "a"
+    assert worklist.pop() == Locus.node("z")
+    assert worklist.pop() == Locus.node("a")
+
+
+def test_node_named_like_edge_locus_is_not_misparsed() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("edge:0", Status.KNOWN, "service", 1, root_permitted=True))
+    cg.add_node(Node("Target", Status.KNOWN, "service", 1, sink_permitted=True))
+    cg.add_edge(Edge("edge:0", "Target", Modality.REQ, "calls"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=0)
+    assert "edge:0" in result["final_nodes"]
 
 
 def test_composite_identifier_collision_is_safe() -> None:

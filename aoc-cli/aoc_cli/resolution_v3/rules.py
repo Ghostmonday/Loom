@@ -2,30 +2,40 @@
 
 from __future__ import annotations
 
-from aoc_cli.resolution_v3.model import LABEL_TYPE_DOMAIN, Modality, Node, Status
+from dataclasses import dataclass
+
+from aoc_cli.resolution_v3.model import LABEL_TYPE_DOMAIN, Locus, LocusKind, Modality, Node, Status
 from aoc_cli.resolution_v3.worklist import NORMAL, URGENT
 
 
-def check_a1(cg, locus: str):
-    if not locus.startswith("edge:"):
+@dataclass(frozen=True)
+class _TargetDomain:
+    domain: set[str]
+    undeclared_labels: tuple[str, ...]
+
+
+def check_a1(cg, locus: Locus):
+    if locus.kind != LocusKind.EDGE:
         return None
-    edge = cg.edges[int(locus.split(":", 1)[1])]
+    edge = cg.edges[int(locus.identity)]
     if edge.active and edge.modality == Modality.REQ and edge.v not in cg.nodes:
         return ("A1", edge)
     return None
 
 
-def check_a2_d1(cg, locus: str):
-    node = cg.nodes.get(locus)
+def check_a2_d1(cg, locus: Locus):
+    if locus.kind != LocusKind.NODE:
+        return None
+    node = cg.nodes.get(str(locus.identity))
     if node and node.status == Status.LATENT_UNRESOLVED and len(node.domain) == 1:
         return ("A2_D1", node)
     return None
 
 
-def check_b1(cg, locus: str):
-    if not locus.startswith("edge:"):
+def check_b1(cg, locus: Locus):
+    if locus.kind != LocusKind.EDGE:
         return None
-    index = int(locus.split(":", 1)[1])
+    index = int(locus.identity)
     required = cg.edges[index]
     if not (required.active and required.modality == Modality.REQ):
         return None
@@ -44,19 +54,25 @@ def check_b1(cg, locus: str):
     return None
 
 
-def applicable_rule(cg, locus: str):
+def applicable_rule(cg, locus: Locus):
     return check_a1(cg, locus) or check_a2_d1(cg, locus) or check_b1(cg, locus)
 
 
 def apply_a1(cg, worklist, edge) -> None:
-    domain = set(LABEL_TYPE_DOMAIN.get(edge.label, set()))
-    cg.add_node(Node(id=edge.v, status=Status.LATENT_UNRESOLVED, domain=domain))
+    target_domain = _aggregate_target_domain(cg, edge.v)
+    cg.add_node(Node(id=edge.v, status=Status.LATENT_UNRESOLVED, domain=target_domain.domain))
+
+    if target_domain.undeclared_labels:
+        domain_detail = f"undeclared labels={list(target_domain.undeclared_labels)}"
+    elif target_domain.domain:
+        domain_detail = f"intersected domain={target_domain.domain}"
+    else:
+        domain_detail = "contradictory declared domains"
+
     cg.log.append(
-        f"[A1] introduced latent node '{edge.v}' "
-        f"(required by {edge.u} -[{edge.label}]-> {edge.v}); "
-        f"seeded domain={domain or '{unconstrained}'}"
+        f"[A1] introduced latent node '{edge.v}' (required by {edge.u} -[{edge.label}]-> {edge.v}); {domain_detail}"
     )
-    worklist.push(edge.v, NORMAL)
+    _requeue_target_closure(cg, worklist, edge.v)
 
 
 def apply_a2_d1(cg, worklist, node) -> None:
@@ -67,9 +83,9 @@ def apply_a2_d1(cg, worklist, node) -> None:
 
     for edge_index in sorted(cg.watch.edges_touching(node.id)):
         edge = cg.edges[edge_index]
-        worklist.push(f"edge:{edge_index}", NORMAL)
-        worklist.push(edge.u, NORMAL)
-        worklist.push(edge.v, NORMAL)
+        worklist.push(Locus.edge(edge_index), NORMAL)
+        worklist.push(Locus.node(edge.u), NORMAL)
+        worklist.push(Locus.node(edge.v), NORMAL)
 
 
 def apply_b1(cg, worklist, required, forbidden) -> None:
@@ -79,8 +95,8 @@ def apply_b1(cg, worklist, required, forbidden) -> None:
         f"[B1] clash on {required.u}->{required.v} '{required.label}' "
         "REQ vs FORBID; priority rule 5: FORBID wins -> REQ edge deactivated"
     )
-    worklist.push(required.u, NORMAL)
-    worklist.push(required.v, NORMAL)
+    worklist.push(Locus.node(required.u), NORMAL)
+    worklist.push(Locus.node(required.v), NORMAL)
 
 
 def apply_b2(cg, worklist) -> bool:
@@ -141,10 +157,10 @@ def apply_b2(cg, worklist) -> bool:
     cg.watch.rebuild()
     cg.log.append(f"[B2] welded SCC {members} (size={len(members)}) into '{composite_id}'")
 
-    worklist.push(composite_id, URGENT)
+    worklist.push(Locus.node(composite_id), URGENT)
     for index in sorted(touched_indices):
         if cg.edges[index].active:
-            worklist.push(f"edge:{index}", URGENT)
+            worklist.push(Locus.edge(index), URGENT)
     return True
 
 
@@ -165,4 +181,33 @@ def _remove_singleton_self_loop(cg, worklist, node_id: str) -> None:
         f"[B2-self] removed prohibited REQ self-loop(s) {deactivated} "
         f"from '{node_id}'; node preserved and tagged ROOT/SINK_PERMITTED"
     )
-    worklist.push(node_id, URGENT)
+    worklist.push(Locus.node(node_id), URGENT)
+
+
+def _aggregate_target_domain(cg, target_id: str) -> _TargetDomain:
+    incoming = sorted(
+        (
+            (edge.u, edge.v, edge.label, index, edge)
+            for index, edge in enumerate(cg.edges)
+            if edge.active and edge.modality == Modality.REQ and edge.v == target_id
+        ),
+        key=lambda item: (item[0], item[1], item[2], item[3]),
+    )
+
+    undeclared = sorted({edge.label for *_, edge in incoming if edge.label not in LABEL_TYPE_DOMAIN})
+    if undeclared:
+        return _TargetDomain(domain=set(), undeclared_labels=tuple(undeclared))
+
+    domain: set[str] | None = None
+    for *_, edge in incoming:
+        edge_domain = set(LABEL_TYPE_DOMAIN[edge.label])
+        domain = edge_domain if domain is None else domain & edge_domain
+
+    return _TargetDomain(domain=domain or set(), undeclared_labels=())
+
+
+def _requeue_target_closure(cg, worklist, target_id: str) -> None:
+    worklist.push(Locus.node(target_id), NORMAL)
+    for index, edge in enumerate(cg.edges):
+        if edge.active and (edge.u == target_id or edge.v == target_id):
+            worklist.push(Locus.edge(index), NORMAL)

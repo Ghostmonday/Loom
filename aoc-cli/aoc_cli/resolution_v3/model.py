@@ -30,6 +30,29 @@ class EngineStatus(Enum):
     ENGINE_FAULT = auto()
 
 
+class LocusKind(Enum):
+    NODE = auto()
+    EDGE = auto()
+
+
+@dataclass(frozen=True)
+class Locus:
+    kind: LocusKind
+    identity: str | int
+
+    @staticmethod
+    def node(node_id: str) -> Locus:
+        return Locus(LocusKind.NODE, node_id)
+
+    @staticmethod
+    def edge(index: int) -> Locus:
+        return Locus(LocusKind.EDGE, index)
+
+    def sort_key(self) -> tuple[int, str]:
+        kind_order = 0 if self.kind == LocusKind.NODE else 1
+        return (kind_order, str(self.identity))
+
+
 @dataclass
 class Node:
     id: str

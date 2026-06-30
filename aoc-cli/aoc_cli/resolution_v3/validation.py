@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aoc_cli.resolution_v3.model import Status
+from aoc_cli.resolution_v3.model import LABEL_TYPE_DOMAIN, Locus, Modality, Status
 
 
 def validation_errors(cg) -> list[str]:
@@ -29,6 +29,20 @@ def validation_errors(cg) -> list[str]:
     if rejected:
         errors.append(f"rejected nodes remain in topology: {rejected}")
 
+    for node_id, node in sorted(cg.nodes.items()):
+        if node.status == Status.LATENT_UNRESOLVED and not node.domain:
+            undeclared = sorted(
+                {
+                    edge.label
+                    for edge in cg.active_edges()
+                    if edge.modality == Modality.REQ and edge.v == node_id and edge.label not in LABEL_TYPE_DOMAIN
+                }
+            )
+            if undeclared:
+                errors.append(f"target '{node_id}' uses undeclared schema labels: {undeclared}")
+            else:
+                errors.append(f"target '{node_id}' has contradictory required type domains")
+
     degree: dict[str, int] = {node_id: 0 for node_id in cg.nodes}
     for edge in cg.active_edges():
         if edge.u in degree:
@@ -49,7 +63,8 @@ def is_valid(cg) -> bool:
 
 
 def is_stable(cg, engine) -> bool:
-    loci = sorted(cg.nodes) + [f"edge:{index}" for index in range(len(cg.edges))]
+    loci = [Locus.node(node_id) for node_id in sorted(cg.nodes)]
+    loci.extend(Locus.edge(index) for index in range(len(cg.edges)))
     for locus in loci:
         if engine.applicable_rule(locus) is not None:
             return False

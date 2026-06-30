@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aoc_cli.resolution_v3.model import EngineStatus
+from aoc_cli.resolution_v3.model import EngineStatus, Locus
 from aoc_cli.resolution_v3.reporting import report_payload
 from aoc_cli.resolution_v3.rules import (
     applicable_rule,
@@ -22,14 +22,14 @@ class Engine:
         self.worklist = Worklist()
         self.injected_fault = injected_fault
 
-    def applicable_rule(self, locus: str):
+    def applicable_rule(self, locus: Locus):
         return applicable_rule(self.cg, locus)
 
     def run(self, max_steps: int = 200) -> dict:
         for node_id in sorted(self.cg.nodes):
-            self.worklist.push(node_id, NORMAL)
+            self.worklist.push(Locus.node(node_id), NORMAL)
         for index in range(len(self.cg.edges)):
-            self.worklist.push(f"edge:{index}", NORMAL)
+            self.worklist.push(Locus.edge(index), NORMAL)
 
         psi_previous = self.cg.psi()
         trace = [(0, psi_previous)]

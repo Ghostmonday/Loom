@@ -5,6 +5,8 @@ from __future__ import annotations
 import heapq
 from dataclasses import dataclass, field
 
+from aoc_cli.resolution_v3.model import Locus
+
 URGENT = 0
 NORMAL = 1
 
@@ -12,8 +14,9 @@ NORMAL = 1
 @dataclass(order=True)
 class _Entry:
     priority: int
-    locus: str
+    sort_key: tuple[int, str]
     version: int = field(compare=False)
+    locus: Locus = field(compare=False)
 
 
 class Worklist:
@@ -21,9 +24,10 @@ class Worklist:
 
     def __init__(self) -> None:
         self._heap: list[_Entry] = []
-        self._current: dict[str, tuple[int, int]] = {}
+        self._current: dict[Locus, tuple[int, int]] = {}
 
-    def push(self, locus: str, priority: int = NORMAL) -> None:
+    def push(self, locus: Locus | str, priority: int = NORMAL) -> None:
+        locus = self._normalize(locus)
         current = self._current.get(locus)
         if current is None:
             effective_priority = priority
@@ -34,9 +38,12 @@ class Worklist:
             version = current_version + 1
 
         self._current[locus] = (effective_priority, version)
-        heapq.heappush(self._heap, _Entry(priority=effective_priority, locus=locus, version=version))
+        heapq.heappush(
+            self._heap,
+            _Entry(priority=effective_priority, sort_key=locus.sort_key(), version=version, locus=locus),
+        )
 
-    def pop(self) -> str | None:
+    def pop(self) -> Locus | None:
         while self._heap:
             entry = heapq.heappop(self._heap)
             current = self._current.get(entry.locus)
@@ -47,3 +54,9 @@ class Worklist:
 
     def __bool__(self) -> bool:
         return bool(self._current)
+
+    @staticmethod
+    def _normalize(locus: Locus | str) -> Locus:
+        if isinstance(locus, Locus):
+            return locus
+        return Locus.node(locus)

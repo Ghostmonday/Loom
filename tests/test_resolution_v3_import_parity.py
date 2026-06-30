@@ -19,6 +19,8 @@ EXPECTED_PUBLIC_NAMES = {
     "Edge",
     "Engine",
     "EngineStatus",
+    "Locus",
+    "LocusKind",
     "Modality",
     "Node",
     "Provenance",
@@ -183,12 +185,12 @@ def test_parity_urgent_promotion() -> None:
     pkg_worklist.push("z", pkg.URGENT)
     pkg_worklist.push("z", pkg.NORMAL)
     pkg_worklist.push("a", pkg.NORMAL)
-    assert pkg_worklist.pop() == "z"
-    assert pkg_worklist.pop() == "a"
+    assert pkg_worklist.pop() == pkg.Locus.node("z")
+    assert pkg_worklist.pop() == pkg.Locus.node("a")
 
     shim_worklist = shim.Worklist()
     shim_worklist.push("z", shim.URGENT)
     shim_worklist.push("z", shim.NORMAL)
     shim_worklist.push("a", shim.NORMAL)
-    assert shim_worklist.pop() == "z"
-    assert shim_worklist.pop() == "a"
+    assert shim_worklist.pop() == shim.Locus.node("z")
+    assert shim_worklist.pop() == shim.Locus.node("a")

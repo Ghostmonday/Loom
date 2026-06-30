@@ -24,6 +24,8 @@ def validation_errors(cg) -> list[str]:
             errors.append(f"active edge {index} has missing source '{edge.u}'")
         if edge.v not in cg.nodes:
             errors.append(f"active edge {index} has missing target '{edge.v}'")
+        if edge.u == edge.v and edge.modality == Modality.FORBID:
+            errors.append(f"internal FORBID constraint remains on '{edge.u}' via edge {index} '{edge.label}'")
 
     rejected = sorted(node.id for node in cg.nodes.values() if node.status == Status.REJECTED)
     if rejected:

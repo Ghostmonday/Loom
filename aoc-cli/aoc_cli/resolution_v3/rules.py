@@ -137,7 +137,7 @@ def apply_b2(cg, worklist) -> bool:
 
     for index in touched_indices:
         edge = cg.edges[index]
-        if edge.active and edge.u == composite_id and edge.v == composite_id:
+        if edge.active and edge.u == composite_id and edge.v == composite_id and edge.modality == Modality.REQ:
             edge.active = False
 
     for member in members:

@@ -105,6 +105,70 @@ def test_weld_manufactures_clash() -> None:
     ]
 
 
+def test_b2_absorbs_internal_req_but_preserves_internal_partial() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("A", Status.KNOWN, "service", 1))
+    cg.add_node(Node("B", Status.KNOWN, "service", 1))
+    cg.add_edge(Edge("A", "B", Modality.REQ, "ab"))
+    cg.add_edge(Edge("B", "A", Modality.REQ, "ba"))
+    cg.add_edge(Edge("A", "B", Modality.PARTIAL, "soft_obligation"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=1)
+    assert ("WELD[A|B]", "WELD[A|B]", "PARTIAL", "soft_obligation") in result["final_edges"]
+    assert ("WELD[A|B]", "WELD[A|B]", "REQ", "ab") not in result["final_edges"]
+    assert ("WELD[A|B]", "WELD[A|B]", "REQ", "ba") not in result["final_edges"]
+
+
+def test_b2_preserves_internal_forbid_as_explicit_contradiction() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("A", Status.KNOWN, "service", 1))
+    cg.add_node(Node("B", Status.KNOWN, "service", 1))
+    cg.add_edge(Edge("A", "B", Modality.REQ, "ab"))
+    cg.add_edge(Edge("B", "A", Modality.REQ, "ba"))
+    cg.add_edge(Edge("A", "B", Modality.FORBID, "forbidden_internal"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=1)
+    assert ("WELD[A|B]", "WELD[A|B]", "FORBID", "forbidden_internal") in result["final_edges"]
+    assert any("internal FORBID constraint remains" in error for error in result["diagnostics"])
+
+
+def test_b2_preserves_member_authority_flags_on_composite() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("A", Status.KNOWN, "service", 1, root_permitted=True))
+    cg.add_node(Node("B", Status.KNOWN, "service", 1, sink_permitted=True))
+    cg.add_edge(Edge("A", "B", Modality.REQ, "ab"))
+    cg.add_edge(Edge("B", "A", Modality.REQ, "ba"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=1)
+    assert result["final_nodes"]["WELD[A|B]"] == ("KNOWN", "composite", 1, True, True)
+
+
+def test_b2_rewires_external_edges_deterministically() -> None:
+    cg = ConstraintGraph()
+    for node_id in ["A", "B", "X", "Y"]:
+        cg.add_node(Node(node_id, Status.KNOWN, "service", 1))
+    cg.add_edge(Edge("A", "B", Modality.REQ, "ab"))
+    cg.add_edge(Edge("B", "A", Modality.REQ, "ba"))
+    cg.add_edge(Edge("X", "B", Modality.REQ, "xb"))
+    cg.add_edge(Edge("A", "Y", Modality.REQ, "ay"))
+    cg.add_edge(Edge("B", "Y", Modality.FORBID, "guard"))
+
+    result = resolve(cg)
+
+    assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=1)
+    assert result["final_edges"] == [
+        ("X", "WELD[A|B]", "REQ", "xb"),
+        ("WELD[A|B]", "Y", "REQ", "ay"),
+        ("WELD[A|B]", "Y", "FORBID", "guard"),
+    ]
+
+
 def test_honest_stuck_ambiguity() -> None:
     cg = ConstraintGraph()
     cg.add_node(Node("AuditLog", Status.KNOWN, "log_sink", 1))

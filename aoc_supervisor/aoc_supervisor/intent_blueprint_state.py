@@ -13,6 +13,7 @@ SESSION_STATUSES = frozenset(
     {
         "CREATED",
         "ANALYZING",
+        "ANALYSIS_BLOCKED",
         "QUESTIONING",
         "PAUSED",
         "CONFLICT_RESOLUTION",

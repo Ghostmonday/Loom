@@ -529,3 +529,472 @@ class TestPerfectSpecLifecycleContract:
         _checks, metrics = evaluate_interrogation_session(created)
         assert metrics.whole_state_reanalysis_rate >= 0.0
         assert metrics.voice_fallback_integrity is True
+
+
+# ─────────────────────────────────────────────
+# IF-HARDEN-001: ANALYSIS_BLOCKED state (Defect A)
+# ─────────────────────────────────────────────
+
+
+def _raise_provider_failure(*args, **kwargs):
+    """Simulate provider failure by raising ProviderFailureError."""
+    from aoc_supervisor.reasoning_provider import ProviderFailureError
+
+    raise ProviderFailureError(
+        code="provider_unavailable",
+        message="Simulated provider failure for testing.",
+        retryable=True,
+    )
+
+
+def _blocked_next_question(state):
+    """Simulate question policy handling a provider outage."""
+    state["analysis_recovery"] = {
+        "code": "provider_unavailable",
+        "message": "Simulated provider failure for testing.",
+        "retryable": True,
+    }
+    return None
+
+
+def _working_select_next(state, *, engine=None):
+    """Simulate successful provider: return a question."""
+    return {
+        "question_id": "q_test_recovered",
+        "domain": "functional_requirements",
+        "decision_target": "functional_scope",
+        "text": "Test recovered question?",
+        "why_it_matters": "Testing recovery.",
+        "impact_hint": "medium",
+        "alternatives_considered": ["ASK"],
+        "answer_mode": "freeform",
+        "next_action": "ASK",
+        "risk_if_wrong": "medium",
+    }
+
+
+def test_provider_failure_sets_analysis_blocked(forge_env) -> None:
+    """Paid session with unavailable provider → ANALYSIS_BLOCKED, current_question=None."""
+    client, service = forge_env
+    with patch.dict(service.create_session.__globals__, {"build_next_question": _blocked_next_question}):
+        created = client.post(
+            "/api/v1/intent-forge/sessions",
+            json={"prompt": "Build a team dashboard", "tier": "paid"},
+            headers=_headers(),
+        ).json()
+    assert created["session_status"] == "ANALYSIS_BLOCKED", (
+        f"expected ANALYSIS_BLOCKED, got {created['session_status']}"
+    )
+    assert created["current_question"] is None
+    assert created.get("analysis_recovery") is not None
+    assert created["analysis_recovery"]["retryable"] is True
+
+
+def test_resume_stays_analysis_blocked_while_provider_fails(forge_env) -> None:
+    """Resume while provider remains unavailable → remains ANALYSIS_BLOCKED."""
+    client, service = forge_env
+    with patch.dict(service.create_session.__globals__, {"build_next_question": _blocked_next_question}):
+        created = client.post(
+            "/api/v1/intent-forge/sessions",
+            json={"prompt": "Build a habit tracker", "tier": "paid"},
+            headers=_headers(),
+        ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    with patch.dict(service.resume.__globals__, {"build_next_question": _blocked_next_question}):
+        resumed = client.post(
+            f"/api/v1/intent-forge/sessions/{sid}/resume",
+            json={"idempotency_key": "resume-blocked-001", "expected_blueprint_version": bv},
+            headers=_headers(),
+        ).json()
+    assert resumed["session_status"] == "ANALYSIS_BLOCKED"
+    assert resumed["current_question"] is None
+
+
+def test_resume_recovering_provider_returns_to_questioning(forge_env) -> None:
+    """Resume after provider recovers → QUESTIONING with a valid current_question."""
+    client, _service = forge_env
+    with patch(
+        "aoc_supervisor.adaptive_question_engine.AdaptiveQuestionEngine.select_next",
+        side_effect=_raise_provider_failure,
+    ):
+        created = client.post(
+            "/api/v1/intent-forge/sessions",
+            json={"prompt": "Build a weather API", "tier": "paid"},
+            headers=_headers(),
+        ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    with patch(
+        "aoc_supervisor.adaptive_question_engine.AdaptiveQuestionEngine.select_next",
+        return_value=_working_select_next({}),
+    ):
+        resumed = client.post(
+            f"/api/v1/intent-forge/sessions/{sid}/resume",
+            json={"idempotency_key": "resume-recovered-001", "expected_blueprint_version": bv},
+            headers=_headers(),
+        ).json()
+    assert resumed["session_status"] == "QUESTIONING"
+    assert resumed["current_question"] is not None
+
+
+def test_no_questioning_without_current_question(forge_env) -> None:
+    """Invariant: no public session may be QUESTIONING with current_question=None."""
+    client, _service = forge_env
+    with patch(
+        "aoc_supervisor.adaptive_question_engine.AdaptiveQuestionEngine.select_next",
+        side_effect=_raise_provider_failure,
+    ):
+        created = client.post(
+            "/api/v1/intent-forge/sessions",
+            json={"prompt": "Build a blog engine", "tier": "paid"},
+            headers=_headers(),
+        ).json()
+    if created["session_status"] == "QUESTIONING":
+        assert created["current_question"] is not None
+    assert created["session_status"] in {"QUESTIONING", "ANALYSIS_BLOCKED"}
+    if created["session_status"] == "ANALYSIS_BLOCKED":
+        assert created["current_question"] is None
+
+
+# ─────────────────────────────────────────────
+# IF-HARDEN-001: Idempotency hardening (Defect B)
+# ─────────────────────────────────────────────
+
+
+def test_duplicate_finalize_idempotent(forge_env) -> None:
+    """Duplicate finalize: no HTTP 500, no blueprint_version increase, stable state."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a file organizer", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    req = {
+        "idempotency_key": "dup-finalize-001",
+        "expected_blueprint_version": bv,
+        "force": False,
+    }
+    first = client.post(f"/api/v1/intent-forge/sessions/{sid}/finalize", json=req, headers=_headers())
+    second = client.post(f"/api/v1/intent-forge/sessions/{sid}/finalize", json=req, headers=_headers())
+    assert first.status_code == 200
+    assert second.status_code == 200, f"duplicate finalize returned {second.status_code}, expected 200"
+    assert second.json()["blueprint_version"] == first.json()["blueprint_version"]
+    assert second.json()["session_status"] == first.json()["session_status"]
+
+
+def test_duplicate_handoff_confirm_idempotent(forge_env) -> None:
+    """Duplicate handoff confirm: no duplicate transition, no HTTP 500."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a timer app", "tier": "free"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    req = {
+        "action": "confirm",
+        "confirmation": "Proceed",
+        "idempotency_key": "dup-confirm-001",
+        "expected_blueprint_version": bv,
+    }
+    first = client.post(f"/api/v1/intent-forge/sessions/{sid}/handoff", json=req, headers=_headers())
+    assert first.status_code == 200
+    bv_after = first.json()["blueprint_version"]
+    second = client.post(f"/api/v1/intent-forge/sessions/{sid}/handoff", json=req, headers=_headers())
+    assert second.status_code == 200, f"duplicate handoff confirm returned {second.status_code}, expected 200"
+    assert second.json()["blueprint_version"] == bv_after
+    assert second.json()["session_status"] == first.json()["session_status"]
+
+
+def test_duplicate_handoff_accept_idempotent(forge_env) -> None:
+    """Duplicate handoff accept: no duplicate transition, no HTTP 500."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a todo CLI", "tier": "free"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    confirm_req = {
+        "action": "confirm",
+        "confirmation": "Proceed",
+        "idempotency_key": "dup-accept-confirm-001",
+        "expected_blueprint_version": bv,
+    }
+    confirmed = client.post(f"/api/v1/intent-forge/sessions/{sid}/handoff", json=confirm_req, headers=_headers())
+    assert confirmed.status_code == 200
+    bv_after = confirmed.json()["blueprint_version"]
+
+    accept_req = {
+        "action": "accept",
+        "idempotency_key": "dup-accept-001",
+        "expected_blueprint_version": bv_after,
+    }
+    first = client.post(f"/api/v1/intent-forge/sessions/{sid}/handoff", json=accept_req, headers=_headers())
+    assert first.status_code == 200
+    assert first.json()["session_status"] == "HANDED_OFF"
+    bv_final = first.json()["blueprint_version"]
+
+    second = client.post(f"/api/v1/intent-forge/sessions/{sid}/handoff", json=accept_req, headers=_headers())
+    assert second.status_code == 200, f"duplicate accept returned {second.status_code}, expected 200"
+    assert second.json()["blueprint_version"] == bv_final
+    assert second.json()["session_status"] == "HANDED_OFF"
+
+
+def test_duplicate_pause_idempotent(forge_env) -> None:
+    """Duplicate pause: no HTTP 500, stable state."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a timer app", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    req = {
+        "idempotency_key": "dup-pause-001",
+        "expected_blueprint_version": bv,
+    }
+    first = client.post(f"/api/v1/intent-forge/sessions/{sid}/pause", json=req, headers=_headers())
+    assert first.status_code == 200
+    bv_after = first.json()["blueprint_version"]
+    second = client.post(f"/api/v1/intent-forge/sessions/{sid}/pause", json=req, headers=_headers())
+    assert second.status_code == 200, f"duplicate pause returned {second.status_code}"
+    assert second.json()["blueprint_version"] == bv_after
+
+
+def test_duplicate_resume_idempotent(forge_env) -> None:
+    """Duplicate resume: no HTTP 500, stable state."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a notebook sync tool", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    pause_req = {
+        "idempotency_key": "dup-resume-pause-001",
+        "expected_blueprint_version": bv,
+    }
+    paused = client.post(f"/api/v1/intent-forge/sessions/{sid}/pause", json=pause_req, headers=_headers())
+    assert paused.status_code == 200
+    bv_after = paused.json()["blueprint_version"]
+
+    resume_req = {
+        "idempotency_key": "dup-resume-001",
+        "expected_blueprint_version": bv_after,
+    }
+    first = client.post(f"/api/v1/intent-forge/sessions/{sid}/resume", json=resume_req, headers=_headers())
+    assert first.status_code == 200
+    bv_final = first.json()["blueprint_version"]
+    second = client.post(f"/api/v1/intent-forge/sessions/{sid}/resume", json=resume_req, headers=_headers())
+    assert second.status_code == 200, f"duplicate resume returned {second.status_code}"
+    assert second.json()["blueprint_version"] == bv_final
+
+
+# ─────────────────────────────────────────────
+# IF-HARDEN-001: Forced finalization (Defect C)
+# ─────────────────────────────────────────────
+
+
+def test_forced_finalization_metadata_persisted(forge_env) -> None:
+    """Force-finalize an incomplete session and verify forced_finalization metadata."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a photo gallery app", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    forced = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/finalize",
+        json={
+            "idempotency_key": "force-meta-001",
+            "expected_blueprint_version": bv,
+            "force": True,
+        },
+        headers=_headers(),
+    )
+    assert forced.status_code == 200
+    assert forced.json()["session_status"] == "FINAL_CONFIRMATION"
+    meta = forced.json().get("forced_finalization")
+    assert meta is not None, "forced_finalization metadata must be present"
+    assert meta.get("forced") is True
+    assert isinstance(meta.get("overridden_blockers"), list)
+    assert len(meta["overridden_blockers"]) > 0
+
+
+def test_forced_finalize_then_handoff_succeeds(forge_env) -> None:
+    """Force-finalized session → handoff confirm → FINALIZED with non-null artifact/projection."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a markdown editor", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    forced = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/finalize",
+        json={
+            "idempotency_key": "force-handoff-001",
+            "expected_blueprint_version": bv,
+            "force": True,
+        },
+        headers=_headers(),
+    )
+    assert forced.status_code == 200
+    assert forced.json()["session_status"] == "FINAL_CONFIRMATION"
+    bv_after = forced.json()["blueprint_version"]
+
+    confirmed = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/handoff",
+        json={
+            "action": "confirm",
+            "confirmation": "Proceed with known gaps",
+            "idempotency_key": "force-handoff-confirm-001",
+            "expected_blueprint_version": bv_after,
+        },
+        headers=_headers(),
+    )
+    assert confirmed.status_code == 200, f"handoff confirm after force failed: {confirmed.json()}"
+    assert confirmed.json()["session_status"] == "FINALIZED"
+    assert confirmed.json().get("artifact") is not None
+    assert confirmed.json().get("executable_projection") is not None
+    # Forced finalization metadata must survive in public view
+    assert confirmed.json().get("forced_finalization") is not None
+
+
+def test_forced_finalize_full_lifecycle(forge_env) -> None:
+    """Force-finalized session → confirm → accept → HANDED_OFF."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a habit tracker", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+    forced = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/finalize",
+        json={
+            "idempotency_key": "force-lifecycle-001",
+            "expected_blueprint_version": bv,
+            "force": True,
+        },
+        headers=_headers(),
+    )
+    assert forced.json()["session_status"] == "FINAL_CONFIRMATION"
+    bv = forced.json()["blueprint_version"]
+
+    confirmed = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/handoff",
+        json={
+            "action": "confirm",
+            "confirmation": "Accept gaps",
+            "idempotency_key": "force-lifecycle-confirm-001",
+            "expected_blueprint_version": bv,
+        },
+        headers=_headers(),
+    )
+    assert confirmed.status_code == 200
+    assert confirmed.json()["session_status"] == "FINALIZED"
+    bv = confirmed.json()["blueprint_version"]
+
+    accepted = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/handoff",
+        json={
+            "action": "accept",
+            "idempotency_key": "force-lifecycle-accept-001",
+            "expected_blueprint_version": bv,
+        },
+        headers=_headers(),
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["session_status"] == "HANDED_OFF"
+
+
+def test_force_does_not_bypass_structural_corruption(forge_env) -> None:
+    """Structurally corrupted blueprint (contradictions) must still block even with force."""
+    client, _service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a voting app", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+
+    # Inject an unresolved contradiction directly into store to simulate corruption
+    service = _service
+    state = service.store.load(sid)
+    state.setdefault("contradictions", []).append(
+        {
+            "id": "CORRUPT-001",
+            "description": "Simulated structural corruption",
+            "element_a_id": "REQ-A",
+            "element_b_id": "REQ-B",
+            "resolved": False,
+        }
+    )
+    state["blueprint_version"] = bv + 1
+    service.store.save(sid, state)
+    bv += 1
+
+    forced = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/finalize",
+        json={
+            "idempotency_key": "force-corrupt-001",
+            "expected_blueprint_version": bv,
+            "force": True,
+        },
+        headers=_headers(),
+    )
+    # With force=True, contradictions should still block
+    assert forced.json()["session_status"] != "FINAL_CONFIRMATION", f"structural corruption bypassed: {forced.json()}"
+
+
+def test_force_does_not_bypass_stale_graph_nodes(forge_env) -> None:
+    """Stale dependency graph nodes must still block even with force."""
+    client, service = forge_env
+    created = client.post(
+        "/api/v1/intent-forge/sessions",
+        json={"prompt": "Build a permissions dashboard", "tier": "paid"},
+        headers=_headers(),
+    ).json()
+    sid = created["session_id"]
+    bv = created["blueprint_version"]
+
+    state = service.store.load(sid)
+    graph = state.setdefault("blueprint_graph", {"version": bv, "nodes": [], "edges": []})
+    graph.setdefault("nodes", []).append(
+        {
+            "id": "REQ-STALE-001",
+            "type": "requirement",
+            "label": "Stale requirement",
+            "stale": True,
+        }
+    )
+    state["blueprint_version"] = bv + 1
+    service.store.save(sid, state)
+    bv += 1
+
+    forced = client.post(
+        f"/api/v1/intent-forge/sessions/{sid}/finalize",
+        json={
+            "idempotency_key": "force-stale-node-001",
+            "expected_blueprint_version": bv,
+            "force": True,
+        },
+        headers=_headers(),
+    )
+    body = forced.json()
+    assert body["session_status"] != "FINAL_CONFIRMATION", f"stale graph node bypassed: {body}"
+    assert "stale graph nodes remain" in body["current_question"]["blocking_items"][0]

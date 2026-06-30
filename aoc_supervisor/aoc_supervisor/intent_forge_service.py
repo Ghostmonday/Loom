@@ -292,6 +292,8 @@ class IntentForgeService:
         state["session_status"] = "QUESTIONING"
         question = build_next_question(state)
         state["current_question"] = question
+        if question is None and state.get("analysis_recovery"):
+            state["session_status"] = "ANALYSIS_BLOCKED"
         bump_blueprint_version(state)
         self.store.save(session_id, state)
         if question:
@@ -358,8 +360,12 @@ class IntentForgeService:
         if should_stop_questioning(state):
             state["session_status"] = "VALIDATING"
         else:
-            state["session_status"] = "QUESTIONING"
-            state["current_question"] = build_next_question(state)
+            next_question = build_next_question(state)
+            state["current_question"] = next_question
+            if next_question is None and state.get("analysis_recovery"):
+                state["session_status"] = "ANALYSIS_BLOCKED"
+            else:
+                state["session_status"] = "QUESTIONING"
         self.store.save(session_id, state, expected_version=expected_blueprint_version)
         self._emit(session_id, "intent.answer.recorded", state, {"question_id": question_id, "action": action})
         if state.get("current_question"):
@@ -437,8 +443,12 @@ class IntentForgeService:
             state["session_status"] = "VALIDATING"
             state["current_question"] = None
         else:
-            state["session_status"] = "QUESTIONING"
-            state["current_question"] = build_next_question(state)
+            next_question = build_next_question(state)
+            state["current_question"] = next_question
+            if next_question is None and state.get("analysis_recovery"):
+                state["session_status"] = "ANALYSIS_BLOCKED"
+            else:
+                state["session_status"] = "QUESTIONING"
         self.store.save(session_id, state, expected_version=expected_blueprint_version)
         self._emit(
             session_id,
@@ -453,7 +463,10 @@ class IntentForgeService:
 
     def pause(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
         state = self.store.load(session_id)
-        self.store.claim_idempotency(state, idempotency_key)
+        try:
+            self.store.claim_idempotency(state, idempotency_key)
+        except IdempotencyReplayError:
+            return public_session_view(state)
         state["session_status"] = "PAUSED"
         bump_blueprint_version(state)
         self.store.save(session_id, state, expected_version=expected_blueprint_version)
@@ -462,11 +475,26 @@ class IntentForgeService:
 
     def resume(self, session_id: str, *, idempotency_key: str, expected_blueprint_version: int) -> dict[str, Any]:
         state = self.store.load(session_id)
-        self.store.claim_idempotency(state, idempotency_key)
+        try:
+            self.store.claim_idempotency(state, idempotency_key)
+        except IdempotencyReplayError:
+            return public_session_view(state)
         unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-        state["session_status"] = "CONFLICT_RESOLUTION" if unresolved else "QUESTIONING"
-        if state["session_status"] == "QUESTIONING" and not state.get("current_question"):
-            state["current_question"] = build_next_question(state)
+        if state.get("session_status") == "ANALYSIS_BLOCKED":
+            state["session_status"] = "QUESTIONING"
+            next_question = build_next_question(state)
+            state["current_question"] = next_question
+            if next_question is None and state.get("analysis_recovery"):
+                state["session_status"] = "ANALYSIS_BLOCKED"
+        elif unresolved:
+            state["session_status"] = "CONFLICT_RESOLUTION"
+        else:
+            state["session_status"] = "QUESTIONING"
+            if not state.get("current_question"):
+                next_question = build_next_question(state)
+                state["current_question"] = next_question
+                if next_question is None and state.get("analysis_recovery"):
+                    state["session_status"] = "ANALYSIS_BLOCKED"
         bump_blueprint_version(state)
         self.store.save(session_id, state, expected_version=expected_blueprint_version)
         self._emit(session_id, "intent.session.resumed", state, {})
@@ -481,17 +509,57 @@ class IntentForgeService:
         force: bool = False,
     ) -> dict[str, Any]:
         state = self.store.load(session_id)
-        self.store.claim_idempotency(state, idempotency_key)
+        try:
+            self.store.claim_idempotency(state, idempotency_key)
+        except IdempotencyReplayError:
+            return public_session_view(state)
+        overridden_blockers: list[str] = []
         if force:
+            strict_validation = validate_blueprint_state(state, finalize=True)
+            overridden_blockers = list(strict_validation.blocking_items)
             for item in state.get("unresolved_items", []):
                 if isinstance(item, dict) and item.get("blocking"):
                     item["blocking"] = False
         validation = validate_blueprint_state(state, finalize=not force)
-        if not validation.ok and not force:
+        if force:
+            structural_errors: list[str] = []
+            contradictions = [
+                c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")
+            ]
+            if contradictions:
+                structural_errors.append(f"{len(contradictions)} unresolved contradictions remain")
+            stale_nodes = [
+                n for n in state.get("blueprint_graph", {}).get("nodes", []) if isinstance(n, dict) and n.get("stale")
+            ]
+            if stale_nodes:
+                structural_errors.append(f"{len(stale_nodes)} stale graph nodes remain")
+            if structural_errors:
+                state["session_status"] = "QUESTIONING"
+                state["current_question"] = {
+                    "question_id": "finalize_blocked",
+                    "text": "Structural issues prevent finalization even with force.",
+                    "domain": "validation",
+                    "blocking_items": structural_errors,
+                }
+                bump_blueprint_version(state)
+                self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                return public_session_view(state)
+        if not validation.ok:
+            if not force:
+                state["session_status"] = "QUESTIONING"
+                state["current_question"] = build_next_question(state) or {
+                    "question_id": "finalize_blocked",
+                    "text": "Resolve blocking validation items before finalizing.",
+                    "domain": "validation",
+                    "blocking_items": validation.blocking_items,
+                }
+                bump_blueprint_version(state)
+                self.store.save(session_id, state, expected_version=expected_blueprint_version)
+                return public_session_view(state)
             state["session_status"] = "QUESTIONING"
-            state["current_question"] = build_next_question(state) or {
+            state["current_question"] = {
                 "question_id": "finalize_blocked",
-                "text": "Resolve blocking validation items before finalizing.",
+                "text": "Validation issues prevent finalization even with force.",
                 "domain": "validation",
                 "blocking_items": validation.blocking_items,
             }
@@ -499,6 +567,12 @@ class IntentForgeService:
             self.store.save(session_id, state, expected_version=expected_blueprint_version)
             return public_session_view(state)
         state["session_status"] = "FINAL_CONFIRMATION"
+        if force:
+            state["forced_finalization"] = {
+                "forced": True,
+                "overridden_blockers": overridden_blockers,
+                "timestamp": state.get("updated_at"),
+            }
         bump_blueprint_version(state)
         self.store.save(session_id, state, expected_version=expected_blueprint_version)
         self._emit(session_id, "blueprint.validation.completed", state, {"ok": validation.ok, "forced": force})
@@ -513,7 +587,10 @@ class IntentForgeService:
         confirmation: str = "",
     ) -> dict[str, Any]:
         state = self.store.load(session_id)
-        self.store.claim_idempotency(state, idempotency_key)
+        try:
+            self.store.claim_idempotency(state, idempotency_key)
+        except IdempotencyReplayError:
+            return public_session_view(state)
         if confirmation.strip():
             state.setdefault("decisions", []).append(
                 {
@@ -522,7 +599,8 @@ class IntentForgeService:
                     "rationale": "final_confirmation",
                 }
             )
-        validation = validate_blueprint_state(state, finalize=True)
+        forced = state.get("forced_finalization", {}) if isinstance(state.get("forced_finalization"), dict) else {}
+        validation = validate_blueprint_state(state, finalize=not forced.get("forced"))
         if not validation.ok:
             state["session_status"] = "QUESTIONING"
             bump_blueprint_version(state)
@@ -550,7 +628,10 @@ class IntentForgeService:
         expected_blueprint_version: int,
     ) -> dict[str, Any]:
         state = self.store.load(session_id)
-        self.store.claim_idempotency(state, idempotency_key)
+        try:
+            self.store.claim_idempotency(state, idempotency_key)
+        except IdempotencyReplayError:
+            return public_session_view(state)
         if state.get("session_status") != "FINALIZED":
             raise ValueError("session must be FINALIZED before handoff")
         state["session_status"] = "HANDED_OFF"

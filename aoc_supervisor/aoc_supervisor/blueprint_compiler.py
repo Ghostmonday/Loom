@@ -77,6 +77,7 @@ def compile_rich_artifact(state: dict[str, Any], *, provisional: bool = False) -
         "domain_coverage": state.get("domain_coverage", {}),
         "confidence_by_domain": state.get("confidence_by_domain", {}),
         "dependency_graph": state.get("blueprint_graph", {}),
+        "forced_finalization": state.get("forced_finalization"),
         "validation": {
             "status": "provisional" if provisional else "complete",
             "readiness": "unverified" if provisional else "verified",

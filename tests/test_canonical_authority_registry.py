@@ -8,7 +8,7 @@ from aoc_supervisor.repo_paths import FRONTEND_DIR, INTENT_FORGE_HTML_PATH, REPO
 
 REGISTRY_PATH = Path("docs/reference/canonical-authority.registry.json")
 GENERATED_MARKER = "GENERATED FILE - DO NOT EDIT. Regenerate from canonical sources."
-INACTIVE_ROOTS = {"frontend-formation-complete", "vaults/gaijinn-memory-fs"}
+INACTIVE_ROOTS = {".venv", "frontend-formation-complete", "vaults/gaijinn-memory-fs"}
 OBSOLETE_UI_ROUTES = {"/ui/index.html", "/ui/intent-forge.html", "/ui/project-hub.html"}
 
 

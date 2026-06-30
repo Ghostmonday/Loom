@@ -97,7 +97,7 @@ def apply_a2_d1(cg, worklist, node) -> None:
 
 def apply_b1(cg, worklist, required, forbidden) -> None:
     del forbidden
-    # Priority rule 5: preserve FORBID and deactivate only the matching REQ.
+    # Priority rule 5: FORBID remains active; deactivate only the matching REQ.
     required.active = False
     cg.log.append(
         f"[B1] clash on {required.u}->{required.v} '{required.label}' "
@@ -205,7 +205,7 @@ def _aggregate_target_domain(cg, target_id: str) -> _TargetDomain:
             for index, edge in enumerate(cg.edges)
             if edge.active and edge.modality == Modality.REQ and edge.v == target_id
         ),
-        # Semantic fields precede edge index so insertion order cannot pick a type.
+        # Semantic fields lead; edge index is only the deterministic tie-breaker.
         key=lambda item: (item[0], item[1], item[2], item[3]),
     )
 

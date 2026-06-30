@@ -17,15 +17,15 @@ def validation_errors(cg) -> list[str]:
     if cg.clash_pairs():
         errors.append("REQ/FORBID clashes remain")
 
-    for index, edge in enumerate(cg.edges):
+    for edge in cg.edges:
         if not edge.active:
             continue
         if edge.u not in cg.nodes:
-            errors.append(f"active edge {index} has missing source '{edge.u}'")
+            errors.append(f"active edge {edge.u}->{edge.v} '{edge.label}' has missing source '{edge.u}'")
         if edge.v not in cg.nodes:
-            errors.append(f"active edge {index} has missing target '{edge.v}'")
+            errors.append(f"active edge {edge.u}->{edge.v} '{edge.label}' has missing target '{edge.v}'")
         if edge.u == edge.v and edge.modality == Modality.FORBID:
-            errors.append(f"internal FORBID constraint remains on '{edge.u}' via edge {index} '{edge.label}'")
+            errors.append(f"internal FORBID constraint remains on '{edge.u}' for label '{edge.label}'")
 
     rejected = sorted(node.id for node in cg.nodes.values() if node.status == Status.REJECTED)
     if rejected:
@@ -50,13 +50,14 @@ def validation_errors(cg) -> list[str]:
             else:
                 errors.append(f"target '{node_id}' has contradictory required type domains")
 
-    for index, edge in enumerate(cg.edges):
+    for edge in cg.edges:
         if not edge.active or edge.label not in LABEL_TYPE_DOMAIN or edge.v not in cg.nodes:
             continue
         target = cg.nodes[edge.v]
         if target.status == Status.KNOWN and target.type not in LABEL_TYPE_DOMAIN[edge.label]:
             errors.append(
-                f"active edge {index} label '{edge.label}' targets '{edge.v}' with incompatible type '{target.type}'"
+                f"active edge {edge.u}->{edge.v} label '{edge.label}' targets '{edge.v}' "
+                f"with incompatible type '{target.type}'"
             )
 
     degree: dict[str, int] = {node_id: 0 for node_id in cg.nodes}

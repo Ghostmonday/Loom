@@ -24,11 +24,11 @@ def report_payload(cg, status, steps: int, trace, valid=None, stable=None, fault
         "valid": valid,
         "stable": stable,
         "fault_detail": fault_detail,
-        "diagnostics": diagnostics,
+        "diagnostics": sorted(diagnostics),
         "final_nodes": {
             node_id: (node.status.name, node.type, node.layer, node.root_permitted, node.sink_permitted)
             for node_id, node in sorted(cg.nodes.items())
         },
-        "final_edges": [(edge.u, edge.v, edge.modality.name, edge.label) for edge in cg.active_edges()],
+        "final_edges": sorted((edge.u, edge.v, edge.modality.name, edge.label) for edge in cg.active_edges()),
         "log": list(cg.log),
     }

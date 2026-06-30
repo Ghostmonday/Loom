@@ -117,8 +117,8 @@ def test_mixed_layer_scc_with_layer_one_cycle_welds_layer_one_only() -> None:
     assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=1)
     assert set(result["final_nodes"]) == {"C", "WELD[A|B]"}
     assert result["final_edges"] == [
-        ("WELD[A|B]", "C", "REQ", "bc"),
         ("C", "WELD[A|B]", "REQ", "ca"),
+        ("WELD[A|B]", "C", "REQ", "bc"),
     ]
 
 
@@ -214,9 +214,9 @@ def test_b2_rewires_external_edges_deterministically() -> None:
 
     assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=1)
     assert result["final_edges"] == [
-        ("X", "WELD[A|B]", "REQ", "xb"),
-        ("WELD[A|B]", "Y", "REQ", "ay"),
         ("WELD[A|B]", "Y", "FORBID", "guard"),
+        ("WELD[A|B]", "Y", "REQ", "ay"),
+        ("X", "WELD[A|B]", "REQ", "xb"),
     ]
 
 
@@ -440,7 +440,7 @@ def test_active_edge_label_must_match_known_target_type() -> None:
 
     assert_terminal(result, EngineStatus.STUCK, valid=False, stable=True, steps=0)
     assert any(
-        "active edge 0 label 'calls' targets 'X' with incompatible type 'log_sink'" in error
+        "active edge A->X label 'calls' targets 'X' with incompatible type 'log_sink'" in error
         for error in result["diagnostics"]
     )
 
@@ -454,6 +454,48 @@ def test_valid_known_node_and_edge_types_remain_canonical() -> None:
     result = resolve(cg)
 
     assert_terminal(result, EngineStatus.CANONICAL, valid=True, stable=True, steps=0)
+
+
+def test_final_edges_are_canonical_across_edge_insertion_order() -> None:
+    def build(edge_order: tuple[int, int]) -> dict:
+        cg = ConstraintGraph()
+        cg.add_node(Node("A", Status.KNOWN, "service", 1))
+        cg.add_node(Node("X", Status.KNOWN, "log_sink", 1))
+        cg.add_node(Node("Y", Status.KNOWN, "service", 1))
+        edges = [
+            Edge("A", "X", Modality.REQ, "calls"),
+            Edge("A", "Y", Modality.REQ, "calls"),
+        ]
+        for index in edge_order:
+            cg.add_edge(edges[index])
+        return resolve(cg)
+
+    first = build((0, 1))
+    second = build((1, 0))
+
+    assert first["final_edges"] == second["final_edges"]
+    assert first["diagnostics"] == second["diagnostics"]
+
+
+def test_final_nodes_are_canonical_across_node_insertion_order() -> None:
+    def build(node_order: tuple[str, str]) -> dict:
+        cg = ConstraintGraph()
+        for node_id in node_order:
+            cg.add_node(Node(node_id, Status.KNOWN, "service", 1))
+        cg.add_edge(Edge("A", "B", Modality.REQ, "calls"))
+        return resolve(cg)
+
+    assert build(("A", "B"))["final_nodes"] == build(("B", "A"))["final_nodes"]
+
+
+def test_a1_log_serializes_ambiguous_domain_canonically() -> None:
+    cg = ConstraintGraph()
+    cg.add_node(Node("AuditLog", Status.KNOWN, "log_sink", 1))
+    cg.add_edge(Edge("AuditLog", "Downstream", Modality.REQ, "flushes_to"))
+
+    result = resolve(cg)
+
+    assert any("intersected domain=['log_sink', 'service']" in line for line in result["log"])
 
 
 def test_unpermitted_orphan_is_stuck() -> None:

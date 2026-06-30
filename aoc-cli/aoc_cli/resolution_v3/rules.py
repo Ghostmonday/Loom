@@ -65,7 +65,7 @@ def apply_a1(cg, worklist, edge) -> None:
     if target_domain.undeclared_labels:
         domain_detail = f"undeclared labels={list(target_domain.undeclared_labels)}"
     elif target_domain.domain:
-        domain_detail = f"intersected domain={target_domain.domain}"
+        domain_detail = f"intersected domain={sorted(target_domain.domain)}"
     else:
         domain_detail = "contradictory declared domains"
 

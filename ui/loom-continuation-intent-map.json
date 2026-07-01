@@ -210,6 +210,8 @@
   ],
   "actions": {
     "intake.attach_project": {
+      "codex_slice": "LOOM-212-consumer",
+      "handoff_input": ".gaijinn/handoff/handoff.json from deliverable.generate_handoff — read continuation.attach_hint + lineage fields before graph.bootstrap",
       "api": {
         "method": "POST",
         "path": "/api/v1/loom/continuation/attach",
@@ -217,7 +219,8 @@
         "body": {
           "repo_path": "string",
           "parent_session_id": "string|null",
-          "session_kind": "genesis|continuation|hotfix|v2|refactor"
+          "session_kind": "genesis|continuation|hotfix|v2|refactor",
+          "handoff_json_path": "string|null"
         }
       },
       "preconditions": ["repo_path is an accessible directory"],

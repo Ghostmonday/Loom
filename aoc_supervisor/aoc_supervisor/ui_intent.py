@@ -744,6 +744,9 @@ class UiIntentDriver:
             base = observation or SprintObservation(sprint_id="", status="merge_status", session_id=sid)
             base.merge = merge_payload
             return base
+        # CODEX LOOM-212: add dispatch branch for deliverable.generate_handoff
+        # (before detect_surfaces in flow.loom_reentry_after_launch). Call API POST
+        # /api/v1/grid/handoff or aoc_cli.helpers.continuation_handoff.write_handoff_artifacts.
         if action == "deliverable.download":
             sid = str(
                 payload.get("session_id") or (observation.session_id if observation else "") or self.session_id or ""

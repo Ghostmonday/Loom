@@ -2329,6 +2329,14 @@ async def grid_merge_status(session_id: str) -> dict[str, Any]:
     }
 
 
+# CODEX LOOM-212 — Continuation handoff (product layer after merge, before launch UI):
+#   POST /api/v1/grid/handoff  body: {session_id, force?: bool}
+#   → runs continuation_handoff.write_handoff_artifacts(project_root)
+#   → returns {handoff_json_path, handoff_md_path, continuation.attach_hint}
+# Gate: merge_pipeline.phase == completed (same as gate.deliverable_merge_complete).
+# GET /api/v1/grid/deliverable (below) stays zip download — handoff is NOT the archive.
+
+
 @app.get("/api/v1/grid/deliverable")
 async def grid_deliverable(session_id: str) -> Response:
     """Download a zip archive of the merged session project."""

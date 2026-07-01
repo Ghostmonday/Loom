@@ -16,17 +16,24 @@
       "order": 1,
       "phase": "merge_complete",
       "requires": "merge.poll_status complete",
+      "action": "deliverable.generate_handoff",
+      "next": "merge_complete"
+    },
+    {
+      "order": 2,
+      "phase": "merge_complete",
+      "requires": "deliverable.generate_handoff complete",
       "action": "deliverable.detect_surfaces",
       "next": "presenting"
     },
     {
-      "order": 2,
+      "order": 3,
       "phase": "presenting",
       "action": "deliverable.present",
       "next": "running"
     },
     {
-      "order": 3,
+      "order": 4,
       "phase": "running",
       "action_by_surface": {
         "terminal": "deliverable.open_terminal",
@@ -35,12 +42,12 @@
       }
     },
     {
-      "order": 4,
+      "order": 5,
       "phase": "running",
       "actions_always_available": ["deliverable.download", "deliverable.view_diff"]
     },
     {
-      "order": 5,
+      "order": 6,
       "phase": "evolution_complete",
       "action": "project.register_for_continuation"
     }
@@ -106,6 +113,39 @@
     "native_indicators": [".desktop", ".app bundle", "native executable", "installer artifact"]
   },
   "actions": {
+    "deliverable.generate_handoff": {
+      "codex_slice": "LOOM-212",
+      "description": "LLM codebase audit on trusted merge output; emit handoff.md + handoff.json for continuation attach",
+      "preconditions": ["merge_pipeline.phase == completed"],
+      "cli": "loom handoff [--session-id] [--project-root] [--force]",
+      "outputs": {
+        "handoff_md": ".gaijinn/handoff/handoff.md",
+        "handoff_json": ".gaijinn/handoff/handoff.json"
+      },
+      "inputs": {
+        "blueprint": ".gaijinn/blueprint.json",
+        "merge_report": ".gaijinn/merge/report.json",
+        "claims_ledger": "intent-forge session when intent_forge_session_id present",
+        "repo_state": "git HEAD + porcelain status"
+      },
+      "postconditions": [
+        "handoff.json.schema_version == 1",
+        "continuation.what_to_do_next is non-empty",
+        "continuation.attach_hint compatible with loom-continuation-intent-map intake.attach_project"
+      ],
+      "algorithm_binding": {
+        "module": "aoc_cli/helpers/continuation_handoff.py",
+        "entrypoint": "write_handoff_artifacts",
+        "llm_audit": "run_handoff_llm_audit",
+        "mode": "spec_only",
+        "gap": "CLI registered; gather + LLM audit + API route not implemented"
+      },
+      "codex_do_not_touch": [
+        "aoc_cli/gravity.py",
+        "aoc_cli/giv.py",
+        "helpers/merge.py merge-grid integrity gates"
+      ]
+    },
     "deliverable.detect_surfaces": {
       "input": {
         "session_id": "string",
@@ -276,8 +316,13 @@
   "gates": [
     {
       "id": "gate.deliverable_merge_complete",
-      "before": "deliverable.detect_surfaces",
+      "before": "deliverable.generate_handoff",
       "require": "merge_pipeline.phase == completed"
+    },
+    {
+      "id": "gate.deliverable_handoff_present",
+      "before": "deliverable.detect_surfaces",
+      "require": ".gaijinn/handoff/handoff.json exists and schema_version == 1"
     },
     {
       "id": "gate.deliverable_surface_runnable",
@@ -291,6 +336,21 @@
     }
   ],
   "smoke_scenarios": [
+    {
+      "id": "flow.loom_handoff_after_merge",
+      "description": "After merge completes, generate handoff.md/json before surface detection; continuation attach consumes handoff.json",
+      "requires": {"GAIJINN_FAKE_REASONING": "1"},
+      "steps": [
+        {"action": "deliverable.generate_handoff", "args": {"session_id": "loom-handoff-smoke"}},
+        {"action": "deliverable.detect_surfaces", "args": {"session_id": "loom-handoff-smoke"}}
+      ],
+      "assertions": [
+        "handoff.json.schema_version == 1",
+        "handoff.md exists",
+        "continuation.what_to_do_next.length >= 1"
+      ],
+      "implementation_status": "spec_only"
+    },
     {
       "id": "flow.loom_launch_terminal",
       "description": "After merge, detect a terminal entrypoint, present it as primary, and expose command and run status while retaining diff and download.",

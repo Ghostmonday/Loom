@@ -140,7 +140,12 @@ def _record_completed_phase_in_loaded_context(
     session_id: str,
     session_root: Path,
 ) -> dict[str, Any]:
-    """Attach merged deliverable for a completed pipeline end."""
+    """Attach merged deliverable for a completed pipeline end.
+
+    CODEX LOOM-212: after merge_pipeline.phase == completed, orchestration should
+    surface handoff artifact paths (.gaijinn/handoff/handoff.json) on session snapshot
+    before deliverable.detect_surfaces. See continuation_handoff + loom-deliverable map.
+    """
     updated = dict(loaded_context)
     updated[completed_phase] = {
         "prior_session_id": session_id,

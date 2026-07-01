@@ -7,8 +7,11 @@ Status: shipped — collect/validate/merge-grid + copy-mode fallback + governanc
 Commands: gaijinn collect, validate-worker, merge-grid
 Artifacts: .gaijinn/merge/{collected,validated,report,governance}.json
 
-Product gap: intent map has no MergeValidation subphase yet; UI jumps to Complete.
-AI agents — extend classify_worker_status / detect_trespasses before UI work.
+Product gap (2026-07-01): merge completes with code + metrics but no continuation handoff.
+CODEX LOOM-212 — after phase == completed, caller may invoke:
+  aoc_cli.helpers.continuation_handoff.write_handoff_artifacts(project_root)
+Outputs .gaijinn/handoff/handoff.md + handoff.json for loom-continuation-intent-map attach.
+Do NOT add LLM audit inside merge-grid; keep merge deterministic. Handoff is a separate command.
 
 Invariants (must never regress):
   - PROTECTED_INVARIANT_PATHS never merged from workers
@@ -1124,6 +1127,9 @@ def merge_pipeline_status(project_root: Path) -> dict[str, Any]:
                 blocked = int(summary.get("blocked", 0) or 0)
                 conflicted = int(summary.get("conflicted", 0) or 0)
             phase = "completed"
+            # CODEX LOOM-212: phase completed is the gate for `loom handoff`.
+            # Optional hook (off by default): if LOOM_AUTO_HANDOFF=1, call
+            # continuation_handoff.write_handoff_artifacts(project_root) here.
         except json.JSONDecodeError:
             phase = "merging"
 

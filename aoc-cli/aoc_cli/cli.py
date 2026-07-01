@@ -20,6 +20,7 @@ from .commands.council import (
 )
 from .commands.doctor import doctor_cmd
 from .commands.grid_spawn import grid_spawn_cmd
+from .commands.handoff import handoff_cmd
 from .commands.hermes_ import hermes_cmd
 from .commands.init_ import init_cmd
 from .commands.merge_grid import merge_grid_cmd
@@ -292,6 +293,21 @@ def validate_worker(
 ) -> None:
     """Run merge-pipeline validation gates for one or all collected workers."""
     validate_worker_cmd(worker_id, workers_dir)
+
+
+# CODEX LOOM-212: `loom handoff` — post-merge continuation artifacts (handoff.md + handoff.json).
+# Implement in commands/handoff.py + helpers/continuation_handoff.py.
+# Map: ui/loom-deliverable-intent-map.json → deliverable.generate_handoff
+# Do NOT touch curvature/GIV/merge gates. Wire after merge_pipeline.phase == completed.
+@app.command()
+def handoff(
+    session_id: str = typer.Option("", "--session-id", help="Orchestrate session id."),
+    project_root: Path | None = typer.Option(None, "--project-root", file_okay=False, dir_okay=True),
+    force: bool = typer.Option(False, "--force", help="Regenerate existing handoff."),
+    json_output: bool = typer.Option(False, "--json", help="Print handoff.json after write."),
+) -> None:
+    """Generate continuation handoff after validated merge (audit + handoff.md/json)."""
+    handoff_cmd(session_id, project_root, force, json_output)
 
 
 @app.command("merge-grid")

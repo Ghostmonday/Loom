@@ -19,6 +19,7 @@ from aoc_cli.resolution_v3.proposal import (
     ProposalKind,
     ResolutionProposal,
     canonicalize_proposals,
+    copy_graph_for_proposal,
     reject_proposal,
 )
 from aoc_cli.resolution_v3.scc import tarjan_scc
@@ -44,6 +45,7 @@ __all__ = [
     "Status",
     "Worklist",
     "canonicalize_proposals",
+    "copy_graph_for_proposal",
     "reject_proposal",
     "resolve",
     "tarjan_scc",

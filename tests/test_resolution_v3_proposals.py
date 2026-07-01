@@ -165,3 +165,50 @@ def test_no_graph_state_mutation() -> None:
     loom.reject_proposal(proposal, "not authorized")
 
     assert cg.psi() == before
+
+
+def test_copy_graph_for_proposal_preserves_graph_payload() -> None:
+    cg = loom.ConstraintGraph()
+    cg.add_node(
+        loom.Node(
+            "A",
+            loom.Status.KNOWN,
+            "service",
+            1,
+            domain={"service", "worker"},
+            root_permitted=True,
+        )
+    )
+    cg.add_node(loom.Node("B", loom.Status.LATENT_UNRESOLVED, domain={"log_sink"}))
+    cg.add_edge(loom.Edge("A", "B", loom.Modality.REQ, "writes_to", loom.Provenance.INFERRED, active=True))
+    cg.add_edge(loom.Edge("B", "A", loom.Modality.FORBID, "calls", active=False))
+    cg.log.append("original trace")
+
+    copied = loom.copy_graph_for_proposal(cg)
+
+    assert copied is not cg
+    assert copied.nodes == cg.nodes
+    assert copied.edges == cg.edges
+    assert copied.log == cg.log
+    assert copied.psi() == cg.psi()
+    assert copied.watch.edges_touching("A") == {0, 1}
+    assert copied.watch.edges_touching("B") == {0, 1}
+
+
+def test_copy_graph_for_proposal_is_isolated_from_original() -> None:
+    cg = loom.ConstraintGraph()
+    cg.add_node(loom.Node("A", loom.Status.KNOWN, "service", 1, domain={"service"}))
+    cg.add_node(loom.Node("B", loom.Status.LATENT_UNRESOLVED, domain={"log_sink"}))
+    cg.add_edge(loom.Edge("A", "B", loom.Modality.REQ, "writes_to"))
+    cg.log.append("original trace")
+
+    copied = loom.copy_graph_for_proposal(cg)
+    copied.nodes["A"].type = "changed"
+    copied.nodes["A"].domain.add("mutated")
+    copied.edges[0].active = False
+    copied.log.append("copy trace")
+
+    assert cg.nodes["A"].type == "service"
+    assert cg.nodes["A"].domain == {"service"}
+    assert cg.edges[0].active is True
+    assert cg.log == ["original trace"]

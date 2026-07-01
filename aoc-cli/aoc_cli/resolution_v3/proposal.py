@@ -9,7 +9,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
-from aoc_cli.resolution_v3.model import Locus
+from aoc_cli.resolution_v3.graph import ConstraintGraph
+from aoc_cli.resolution_v3.model import Edge, Locus, Node
 
 
 class ProposalKind(Enum):
@@ -79,11 +80,46 @@ def reject_proposal(proposal: ResolutionProposal, reason: str) -> ProposalDecisi
     )
 
 
+def copy_graph_for_proposal(cg: ConstraintGraph) -> ConstraintGraph:
+    """Return an isolated graph copy for speculative proposal checks."""
+    copied = ConstraintGraph()
+
+    for node_id in sorted(cg.nodes):
+        node = cg.nodes[node_id]
+        copied.add_node(
+            Node(
+                id=node.id,
+                status=node.status,
+                type=node.type,
+                layer=node.layer,
+                domain=set(node.domain),
+                root_permitted=node.root_permitted,
+                sink_permitted=node.sink_permitted,
+            )
+        )
+
+    for edge in cg.edges:
+        copied.add_edge(
+            Edge(
+                u=edge.u,
+                v=edge.v,
+                modality=edge.modality,
+                label=edge.label,
+                provenance=edge.provenance,
+                active=edge.active,
+            )
+        )
+
+    copied.log = list(cg.log)
+    return copied
+
+
 __all__ = [
     "ProposalDecision",
     "ProposalDecisionStatus",
     "ProposalKind",
     "ResolutionProposal",
     "canonicalize_proposals",
+    "copy_graph_for_proposal",
     "reject_proposal",
 ]

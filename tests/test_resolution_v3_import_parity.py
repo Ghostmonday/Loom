@@ -31,6 +31,7 @@ EXPECTED_PUBLIC_NAMES = {
     "Status",
     "Worklist",
     "canonicalize_proposals",
+    "copy_graph_for_proposal",
     "reject_proposal",
     "resolve",
     "tarjan_scc",

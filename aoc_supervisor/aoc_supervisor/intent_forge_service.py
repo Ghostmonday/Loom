@@ -11,6 +11,7 @@ from aoc_supervisor.blueprint_compiler import (
     compile_rich_artifact,
     validate_blueprint_state,
 )
+from aoc_supervisor.claims_ledger import build_claim_ledger
 from aoc_supervisor.conflict_resolver import detect_contradictions, merge_contradictions, resolution_options
 from aoc_supervisor.intent_blueprint import detect_intent_streams
 from aoc_supervisor.intent_blueprint_state import (
@@ -328,6 +329,9 @@ class IntentForgeService:
 
     def get_session(self, session_id: str) -> dict[str, Any]:
         return public_session_view(self.store.load(session_id))
+
+    def get_claims_ledger(self, session_id: str) -> dict[str, Any]:
+        return build_claim_ledger(self.store.load(session_id))
 
     def _resolve_current_question(self, state: dict[str, Any], question_id: str) -> tuple[str, str]:
         current = state.get("current_question") or {}

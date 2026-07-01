@@ -2,9 +2,28 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
 from aoc_supervisor.blueprint_compiler import compile_executable_projection, compile_rich_artifact
 from aoc_supervisor.claims_ledger import build_claim_ledger
 from aoc_supervisor.intent_blueprint_state import new_blueprint_state, public_session_view
+from aoc_supervisor.intent_forge_service import IntentForgeService
+from aoc_supervisor.repo_paths import SANDBOX_SHARED_FILES, SANDBOX_WORKSPACE_FRAGMENTS
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture
+def claims_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    import aoc_supervisor.api as api
+
+    monkeypatch.setenv("GAIJINN_ALLOW_MULTI_API_WORKER", "1")
+    monkeypatch.setenv("GAIJINN_FAKE_REASONING", "1")
+    monkeypatch.setenv("GAIJINN_ALLOW_INSECURE_LOCAL", "1")
+    monkeypatch.setattr(api, "ROOT_DIR", tmp_path)
+    api._intent_forge_service = IntentForgeService(tmp_path)
+    with TestClient(api.app) as client:
+        yield client, api._intent_forge_service
 
 
 def _state() -> dict:
@@ -97,6 +116,30 @@ def test_explicit_incompatible_claims_block_promotion() -> None:
     assert ledger["promotion_gates"]["blueprint_influence_available"] is False
 
 
+def test_empty_ledger_keeps_blueprint_influence_locked() -> None:
+    state = _state()
+    state["original_prompt"] = ""
+
+    ledger = build_claim_ledger(state)
+
+    assert ledger["claim_count"] == 0
+    assert ledger["promotion_gates"]["evidence_packet_received"] is False
+    assert ledger["promotion_gates"]["blueprint_influence_available"] is False
+
+
+def test_promoted_claims_unlock_blueprint_influence() -> None:
+    state = _state()
+    state["confirmed_requirements"] = [
+        {"id": "REQ-1", "text": "Support offline sync.", "domain": "functional_requirements"}
+    ]
+
+    ledger = build_claim_ledger(state)
+
+    assert ledger["promoted_count"] >= 2
+    assert ledger["contradiction_count"] == 0
+    assert ledger["promotion_gates"]["blueprint_influence_available"] is True
+
+
 def test_compile_rich_artifact_includes_claims_ledger() -> None:
     state = _state()
     state["acceptance_criteria"] = [{"id": "AC-1", "text": "Search works while offline."}]
@@ -139,3 +182,47 @@ def test_promoted_claims_feed_projection_descriptions() -> None:
 
     assert projection["projection_mode"] == "intent_forge"
     assert "Expose a local API for notebook search." in descriptions
+
+
+def test_claims_ledger_endpoint_returns_owned_session_ledger(claims_api) -> None:
+    client, service = claims_api
+    state = _state()
+    state["user_id"] = "alice"
+    state["confirmed_requirements"] = [
+        {"id": "REQ-1", "text": "Keep every claim auditable.", "domain": "observability"}
+    ]
+    service.store.create(state)
+
+    response = client.get(
+        f"/api/v1/intent-forge/sessions/{state['session_id']}/claims-ledger",
+        headers={"X-User-Id": "alice"},
+    )
+
+    assert response.status_code == 200
+    ledger = response.json()
+    assert ledger["promotion_gates"]["blueprint_influence_available"] is True
+    assert any(claim["text"] == "Keep every claim auditable." for claim in ledger["claims"])
+
+
+def test_claims_ledger_endpoint_rejects_non_owner(claims_api) -> None:
+    client, service = claims_api
+    state = _state()
+    state["user_id"] = "alice"
+    service.store.create(state)
+
+    response = client.get(
+        f"/api/v1/intent-forge/sessions/{state['session_id']}/claims-ledger",
+        headers={"X-User-Id": "bob"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_claims_ledger_ui_uses_promotion_gate_for_ratification() -> None:
+    driver = SANDBOX_SHARED_FILES["intent-forge-driver.js"].read_text(encoding="utf-8")
+    fragment = SANDBOX_WORKSPACE_FRAGMENTS["claims-ledger.html"].read_text(encoding="utf-8")
+
+    assert 'API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/claims-ledger"' in driver
+    assert "gates.blueprint_influence_available === true" in driver
+    assert "blueprint-ratification" in driver
+    assert 'id="claims-ledger-promote"' in fragment

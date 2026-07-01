@@ -1880,6 +1880,16 @@ async def intent_forge_get_session(session_id: str, request: Request) -> dict[st
     return state
 
 
+@app.get("/api/v1/intent-forge/sessions/{session_id}/claims-ledger")
+async def intent_forge_get_claims_ledger(session_id: str, request: Request) -> dict[str, Any]:
+    user_id = require_user_id(request)
+    _assert_intent_forge_owner(session_id, user_id)
+    try:
+        return await _run_blocking(_intent_forge_service.get_claims_ledger, session_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/v1/intent-forge/sessions/{session_id}/answers")
 async def intent_forge_submit_answer(session_id: str, request: Request) -> dict[str, Any]:
     try:

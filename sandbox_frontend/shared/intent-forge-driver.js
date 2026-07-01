@@ -103,7 +103,8 @@
     if (data.session_id || state().sessionId || status) {
       unlocks.push("claims-ledger");
     }
-    if (status === "FINAL_CONFIRMATION" || status === "FINALIZED" || status === "HANDED_OFF") {
+    var gates = data.claims_ledger && data.claims_ledger.promotion_gates ? data.claims_ledger.promotion_gates : {};
+    if (gates.blueprint_influence_available === true) {
       unlocks.push("blueprint-ratification");
     }
     if (status === "FINALIZED" || status === "HANDED_OFF") {
@@ -172,6 +173,15 @@
     setText("claims-ledger-contradiction-note", ledger.contradiction_count ? "Blocking contradictions require resolution." : "No real conflicts detected.");
     setText("claims-ledger-influence-state", gates.blueprint_influence_available ? "Open" : "Locked");
     setText("claims-ledger-influence-note", gates.blueprint_influence_available ? "Promoted claims can inform projection." : "Only verified claims may cross.");
+    var promote = $("claims-ledger-promote");
+    if (promote) {
+      promote.disabled = gates.blueprint_influence_available !== true;
+      promote.classList.toggle("opacity-50", promote.disabled);
+      promote.classList.toggle("cursor-not-allowed", promote.disabled);
+      promote.classList.toggle("bg-primary", !promote.disabled);
+      promote.classList.toggle("text-on-primary", !promote.disabled);
+      promote.classList.toggle("border-outline-variant/30", promote.disabled);
+    }
     gate("claims-gate-evidence", gates.evidence_packet_received);
     gate("claims-gate-extracted", gates.claims_extracted_with_provenance);
     gate("claims-gate-contradictions", gates.contradictions_resolved_or_blocked);
@@ -193,6 +203,25 @@
         (status === "promoted" ? 'bg-secondary/10 text-secondary border border-secondary/30' : 'bg-tertiary/10 text-tertiary border border-tertiary/30') +
         '">' + html(status) + '</span></span>';
       rows.appendChild(row);
+    });
+  }
+  function refreshClaimsLedger() {
+    var s = state();
+    if (!s.sessionId) {
+      renderClaimsLedger(s.latestSession || {});
+      return Promise.resolve();
+    }
+    return request(API_PREFIX + "/sessions/" + encodeURIComponent(s.sessionId) + "/claims-ledger", {
+      method: "GET",
+      headers: headers()
+    }).then(function (ledger) {
+      var latest = s.latestSession || {};
+      latest.claims_ledger = ledger;
+      s.latestSession = latest;
+      updateStageLocks(latest);
+      renderClaimsLedger(latest);
+    }).catch(function (err) {
+      feedback(err.message, true);
     });
   }
   function syncButtons() {
@@ -292,7 +321,7 @@
   }
   document.addEventListener("workspace-loaded", function (event) { if (event.detail.id === "intent-forge") initIntentForge(); });
   document.addEventListener("workspace-loaded", function (event) {
-    if (event.detail.id === "claims-ledger") renderClaimsLedger(state().latestSession || {});
+    if (event.detail.id === "claims-ledger") refreshClaimsLedger();
   });
   if (document.readyState !== "loading") initIntentForge(); else document.addEventListener("DOMContentLoaded", initIntentForge);
 })();

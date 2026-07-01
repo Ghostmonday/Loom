@@ -67,6 +67,10 @@
   function currentQuestion(data) {
     return data.current_question || data.question || null;
   }
+  function setPanelVisible(id, visible) {
+    var el = $(id);
+    if (el) el.classList.toggle("hidden", !visible);
+  }
   function render(data) {
     var s = state();
     s.latestSession = data;
@@ -74,6 +78,11 @@
     if (data.session_status) s.sessionStatus = data.session_status;
     if (typeof data.blueprint_version === "number") s.blueprintVersion = data.blueprint_version;
     updateStageLocks(data);
+    var hasSession = !!(s.sessionId || data.session_id);
+    setPanelVisible("question-panel", hasSession);
+    setPanelVisible("readiness-panel", hasSession);
+    setPanelVisible("understanding-panel", hasSession);
+    setPanelVisible("handoff-panel", hasSession);
     var question = currentQuestion(data);
     if (question) {
       s.currentQuestionId = question.id || question.question_id || null;

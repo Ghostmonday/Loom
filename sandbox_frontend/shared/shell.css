@@ -19,8 +19,6 @@
   --text-muted: #c0c6d6;
   --text-dim: #888;
   --scrollbar-width: 4px;
-  --sidebar-width: 56px;
-  --sidebar-width-narrow: 48px;
   --topnav-height: 64px;
   --topnav-height-compact: 48px;
   --inspector-width: 280px;
@@ -73,10 +71,6 @@ body {
 
 #shell-topnav {
   height: var(--topnav-height);
-}
-
-#shell-sidenav {
-  width: var(--sidebar-width);
 }
 
 #shell-inspector {
@@ -285,10 +279,6 @@ body {
 }
 
 @media (max-width: 860px) {
-  #shell-sidenav {
-    display: none;
-  }
-
   #workspace-content {
     padding: 18px;
   }

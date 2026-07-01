@@ -12,7 +12,7 @@
         Canvas your vision before architecture is synthesized.
       </p>
     </div>
-    <div class="hidden sm:flex items-center gap-stack-sm rounded-xl border border-outline-variant/30 bg-white/5 px-stack-lg py-stack-md">
+    <div id="intent-api-pill" class="hidden sm:flex items-center gap-stack-sm rounded-xl border border-outline-variant/30 bg-white/5 px-stack-lg py-stack-md">
       <span class="w-2 h-2 rounded-full bg-secondary shadow-[0_0_12px_rgba(71,226,102,0.55)]"></span>
       <span class="font-label-caps text-label-caps text-on-surface-variant">API Ready</span>
     </div>
@@ -34,12 +34,11 @@
               class="px-6 py-2 bg-primary text-on-primary font-bold rounded-xl hover:opacity-90 active:scale-95 transition-all spring-transition disabled:opacity-30" disabled>
         Start Intent Forge
       </button>
-      <span class="font-body-sm text-body-sm text-on-surface-variant/60">No graph is mutated during intake.</span>
     </div>
   </div>
 
   <!-- Question Panel -->
-  <div class="glass-panel rounded-xl p-container-margin space-y-stack-lg">
+  <div id="question-panel" class="glass-panel rounded-xl p-container-margin space-y-stack-lg hidden">
     <div id="question-text" class="font-title-md text-title-md text-on-surface min-h-[2rem]">
       Start a session to receive the first backend-generated interrogation question.
     </div>
@@ -70,7 +69,7 @@
   </div>
 
   <!-- Readiness Gate -->
-  <div class="glass-panel rounded-xl p-container-margin">
+  <div id="readiness-panel" class="glass-panel rounded-xl p-container-margin hidden">
     <div class="flex flex-wrap items-center justify-between gap-stack-lg">
       <div class="shrink-0">
         <span class="font-label-caps text-label-caps text-on-surface-variant">READINESS SCORE</span>
@@ -91,7 +90,7 @@
   </div>
 
   <!-- Understanding Panel -->
-  <div class="glass-panel rounded-xl p-container-margin space-y-stack-md">
+  <div id="understanding-panel" class="glass-panel rounded-xl p-container-margin space-y-stack-md hidden">
     <h3 class="font-title-md text-title-md text-on-surface">Understanding</h3>
     <ul id="understanding-list" class="space-y-stack-sm">
       <li class="font-body-sm text-body-sm text-on-surface-variant py-stack-sm border-b border-outline-variant/20">No requirements yet captured.</li>
@@ -104,7 +103,7 @@
   </div>
 
   <!-- Handoff Controls -->
-  <div class="flex flex-wrap gap-stack-md pb-stack-lg">
+  <div id="handoff-panel" class="flex flex-wrap gap-stack-md pb-stack-lg hidden">
     <button id="btn-confirm-handoff"
            class="px-6 py-2 bg-secondary text-on-secondary font-bold rounded-xl hover:opacity-90 active:scale-95 transition-all spring-transition disabled:opacity-30" disabled>
       Confirm Handoff

@@ -137,16 +137,6 @@
     }
   };
 
-  /* SideBar tool definitions */
-  var SIDEBAR_TOOLS = [
-    { id: "navigate",      icon: "near_me",        tooltip: "Navigate" },
-    { id: "inspect",       icon: "straighten",     tooltip: "Inspect" },
-    { id: "graph-layout",  icon: "architecture",   tooltip: "Graph Layout" },
-    { id: "boundaries",    icon: "layers",         tooltip: "Boundaries" },
-    { id: "visibility",    icon: "visibility",     tooltip: "Visibility" },
-    { id: "terminal",      icon: "terminal",       tooltip: "Terminal", optional: true }
-  ];
-
   /* ═══════════════════════════════════════════════════════════
    *  STATE
    * ═══════════════════════════════════════════════════════════ */
@@ -230,7 +220,6 @@
     dom = {
       workspace: document.getElementById("workspace-content"),
       topnav: document.getElementById("shell-topnav"),
-      sidenav: document.getElementById("shell-sidenav"),
       console: document.getElementById("shell-console"),
       dashboard: document.getElementById("shell-dashboard"),
       inspector: document.getElementById("shell-inspector"),
@@ -240,7 +229,6 @@
       settingsBtn: document.getElementById("shell-settings"),
       helpBtn: document.getElementById("shell-help"),
       avatar: document.getElementById("shell-avatar"),
-      toolContainer: document.getElementById("shell-tools"),
       versionLabel: document.getElementById("shell-version"),
       consoleTabs: document.getElementById("console-tabs"),
       consoleContent: document.getElementById("console-content"),
@@ -299,36 +287,25 @@
     dom.avatar = document.getElementById("shell-avatar");
   }
 
-  function renderSideNav() {
-    var html = '<div class="flex flex-col items-center gap-stack-lg w-full">';
-
-    SIDEBAR_TOOLS.forEach(function (tool) {
-      var isActive = tool.id === state.activeTool;
-      var activeClass = isActive
-        ? 'bg-secondary-container text-on-secondary-container rounded-xl shadow-[0_0_15px_rgba(71,226,102,0.3)]'
-        : 'text-on-surface-variant hover:bg-surface-container-high rounded-xl';
-      html += '<button class="w-10 h-10 flex items-center justify-center ' + activeClass + ' spring-transition" data-tool="' + tool.id + '" title="' + tool.tooltip + '">' +
-        '<span class="material-symbols-outlined">' + tool.icon + '</span></button>';
-    });
-
-    html += '</div>' +
-      '<div class="mt-auto flex flex-col items-center gap-stack-lg">' +
-      '<span class="font-label-caps text-[10px] text-on-surface-variant/50 tracking-widest vertical-rl rotate-180 mb-stack-lg">V1.2</span>' +
-      '</div>';
-
-    dom.sidenav.innerHTML = html;
-
-    // Bind tool clicks
-    dom.sidenav.querySelectorAll('[data-tool]').forEach(function (el) {
-      el.addEventListener("click", function () {
-        var toolId = el.getAttribute("data-tool");
-        state.activeTool = toolId;
-        renderSideNav();
-      });
-    });
-  }
-
   function renderConsole() {
+    if (state.currentWorkspace === "intent-forge") {
+      dom.console.innerHTML =
+        '<div class="flex items-center h-full px-container-margin gap-stack-md">' +
+        '<span class="font-label-caps text-label-caps text-on-surface-variant/55">Intent Forge</span>' +
+        '<div class="flex-1"></div>' +
+        '<button id="dashboard-toggle" class="material-symbols-outlined text-on-surface-variant hover:text-primary cursor-pointer spring-transition" title="Architectural pulse">monitoring</button>' +
+        '</div>';
+      var compactToggle = document.getElementById("dashboard-toggle");
+      if (compactToggle) {
+        compactToggle.addEventListener("click", function () {
+          state.dashboardOpen = !state.dashboardOpen;
+          dom.dashboardPanel.classList.toggle("open", state.dashboardOpen);
+        });
+      }
+      dom.dashboardToggle = compactToggle;
+      return;
+    }
+
     var tabs = ["Logs", "Timeline", "Output", "Debug"];
     var html = '<div class="flex items-center h-full px-container-margin gap-gutter">' +
       '<div id="console-tabs" class="flex items-center gap-stack-md">';
@@ -380,7 +357,7 @@
 
   function renderRightInspector() {
     var content = document.getElementById("inspector-content");
-    if (state.currentWorkspace === "hub") {
+    if (state.currentWorkspace === "hub" || state.currentWorkspace === "intent-forge") {
       dom.inspectorPanel.style.display = "none";
     } else {
       dom.inspectorPanel.style.display = "flex";
@@ -423,7 +400,6 @@
 
     // Re-render shell components
     renderTopNav();
-    renderSideNav();
     renderConsole();
     renderRightInspector();
 
@@ -508,7 +484,6 @@
   function init() {
     cacheDom();
     renderTopNav();
-    renderSideNav();
     renderConsole();
     renderFloatingDashboard();
     renderRightInspector();

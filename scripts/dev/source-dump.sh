@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# LooM source dump / knowledge pack generator.
+# Loom source dump / knowledge pack generator.
 #
 # Default mode is curated for AI session starts:
 #   bash scripts/dev/source-dump.sh ~/Desktop/LOOMFILES2.md
@@ -31,8 +31,9 @@ OUT="${1:-$HOME/Desktop/LOOMFILES2.md}"
 COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 BRANCH="$(git -C "$ROOT" branch --show-current 2>/dev/null || echo unknown)"
 RECENT_COMMITS="$(git -C "$ROOT" log --oneline -8 2>/dev/null || true)"
+WORKTREE_STATUS="$(git -C "$ROOT" status --short --branch 2>/dev/null || true)"
 
-python3 - "$ROOT" "$OUT" "$BRANCH" "$COMMIT" "$MODE" "$RECENT_COMMITS" <<'PY'
+python3 - "$ROOT" "$OUT" "$BRANCH" "$COMMIT" "$MODE" "$RECENT_COMMITS" "$WORKTREE_STATUS" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -48,6 +49,7 @@ BRANCH = sys.argv[3]
 COMMIT = sys.argv[4]
 MODE = sys.argv[5]
 RECENT_COMMITS = sys.argv[6]
+WORKTREE_STATUS = sys.argv[7]
 
 EXTENSIONS = {
     ".cfg",
@@ -276,6 +278,10 @@ def write_curated_dump(
         "It is optimized for fast orientation, not byte-for-byte archival completeness. "
         "Use `scripts/dev/source-dump.sh --full` when a complete text dump is required.\n\n"
     )
+    out.write(
+        "Default output is `~/Desktop/LOOMFILES2.md`, with a sibling gzip artifact generated automatically. "
+        "The curated mode is meant to be the handoff pack you give a fresh model before deeper repo exploration.\n\n"
+    )
     out.write("Start resolver work by reading these files in order:\n\n")
     for path in [
         "aoc-cli/aoc_cli/resolution_v3/model.py",
@@ -307,6 +313,11 @@ def write_curated_dump(
     if RECENT_COMMITS.strip():
         out.write("\nRecent commits at dump time:\n\n")
         for line in RECENT_COMMITS.splitlines():
+            out.write(f"- `{line}`\n")
+
+    if WORKTREE_STATUS.strip():
+        out.write("\nGit status at dump time:\n\n")
+        for line in WORKTREE_STATUS.splitlines():
             out.write(f"- `{line}`\n")
 
     out.write("\n## TABLE OF CONTENTS\n\n")

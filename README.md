@@ -1,7 +1,7 @@
 # Loom
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](#)
-[![Tests](https://img.shields.io/badge/tests-692%20passing-green)](#)
+[![Tests](https://img.shields.io/badge/tests-795%20passing-green)](#)
 [![Ruff](https://img.shields.io/badge/lint-ruff-clean-brightgreen)](#)
 
 **Geometric orchestration engine for parallel AI coding agents.**
@@ -26,6 +26,8 @@ It works by measuring the *actual geometry* of your code, not just the import gr
 - [Real Results](#real-results)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Runtime Pipeline](#runtime-pipeline)
+- [Source Dump Workflow](#source-dump-workflow)
 - [Repository Structure](#repository-structure)
 - [Tests](#tests)
 - [Runtime State](#runtime-state)
@@ -289,6 +291,40 @@ loom status --strict
 
 Use `loom --help` or any subcommand's `--help` for the authoritative interface.
 
+## Runtime Pipeline
+
+Loom now has a minimal deterministic end-to-end runtime path wired through the hardened `resolution_v3` engine:
+
+```bash
+loom run-pipeline examples/runtime-pipeline-minimal.json
+```
+
+That path covers:
+
+```text
+input -> constraint graph -> resolution_v3 -> work unit extraction -> execution -> ordered result aggregation
+```
+
+It is intentionally narrow and boring in the good way: one input, one deterministic output shape, no scheduler cleverness yet.
+
+## Source Dump Workflow
+
+For handing context to another model or starting a fresh session, generate the curated knowledge pack:
+
+```bash
+bash scripts/dev/source-dump.sh
+```
+
+That writes `~/Desktop/LOOMFILES2.md` plus `~/Desktop/LOOMFILES2.md.gz`.
+
+Use full archival mode only when you truly need byte-heavy completeness:
+
+```bash
+bash scripts/dev/source-dump.sh --full ~/Desktop/gaijinn-source-dump.txt
+```
+
+Curated mode deduplicates content-identical text files, skips empty scratch JSON, records recent commits and git status, and keeps the dump focused on files a new model can absorb quickly.
+
 ### Terminal UI (Greenfield / Demo)
 
 ```bash
@@ -328,7 +364,7 @@ Scope presets:
 │   └── campaign/                     # Case studies, legal, patent materials
 ├── examples/                         # Example targets and demonstrations
 │   └── tiny-python-service/          # Reference target for gateway testing
-├── tests/                            # 692+ tests: unit, integration, contract, E2E
+├── tests/                            # 795+ tests: unit, integration, contract, E2E
 │   ├── conftest.py                   # Pytest fixtures (mock grid, fake reasoning)
 │   └── test_*.py                     # Per-module test suites
 ├── scripts/                          # CI, development, and demo scripts
@@ -359,7 +395,7 @@ Key implementation files:
 ## Tests
 
 ```bash
-# Run the full suite (692+ tests)
+# Run the full suite (795+ tests)
 pytest
 
 # With coverage

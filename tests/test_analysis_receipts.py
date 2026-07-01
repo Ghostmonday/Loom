@@ -1,4 +1,4 @@
-from aoc_supervisor.aoc_supervisor.analysis_receipts import build_analysis_receipt, validate_receipt
+from aoc_supervisor.analysis_receipts import build_analysis_receipt, validate_receipt
 
 
 def test_validate_receipt_success():

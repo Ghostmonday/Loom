@@ -811,12 +811,26 @@ def _spawn_worker_command(
         )
         return ["bash", "-c", script]
 
-    last_message = worker_dir / "codex-last-message.txt"
+    # Security: resolve and validate worker_dir is under WORKERS_DIR
+    resolved_worker_dir = worker_dir.resolve()
+    resolved_workers_root = WORKERS_DIR.resolve()
+    if not str(resolved_worker_dir).startswith(str(resolved_workers_root)):
+        raise ValueError(f"Unsafe worker directory: {worker_dir}")
+
+    # Security: resolve and validate executor binary
+    executor_bin = shutil.which("codex")
+    if not executor_bin:
+        raise RuntimeError("codex executor not found on PATH")
+    executor_path = Path(executor_bin).resolve()
+    if executor_path.name != "codex":
+        raise RuntimeError(f"Invalid executor binary: {executor_path.name}")
+
+    last_message = resolved_worker_dir / "codex-last-message.txt"
     return [
-        "codex",
+        str(executor_path),
         "exec",
         "-C",
-        str(worker_dir.resolve()),
+        str(resolved_worker_dir),
         "-s",
         "workspace-write",
         "--output-last-message",
@@ -2386,8 +2400,14 @@ async def council_say(request: Request) -> dict[str, Any]:
 @app.post("/api/v1/hermes/chat")
 async def hermes_chat(request: Request) -> dict[str, Any]:
     """Run a one-shot Hermes session from the Gaijinn terminal chat."""
-    if shutil.which("hermes") is None:
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin is None:
         raise HTTPException(status_code=503, detail="hermes executable not found on PATH")
+
+    hermes_path = Path(hermes_bin).resolve()
+    if hermes_path.name != "hermes":
+        # Security: block execution of non-hermes binaries found on PATH
+        raise HTTPException(status_code=500, detail="Invalid hermes executable")
 
     try:
         body = await request.json()
@@ -2411,17 +2431,19 @@ async def hermes_chat(request: Request) -> dict[str, Any]:
     )
 
     hermes_model = os.environ.get("HERMES_DEFAULT_MODEL", "").strip()
-    hermes_cmd: list[str] = ["hermes"]
+    hermes_cmd: list[str] = [str(hermes_path)]
     if hermes_model:
         hermes_cmd.extend(["-m", hermes_model])
     hermes_cmd.extend(["-z", prompt])
 
     try:
+        # Ensure ROOT_DIR is absolute and resolved
+        safe_cwd = ROOT_DIR.resolve()
         proc = await asyncio.create_subprocess_exec(
             *hermes_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(ROOT_DIR),
+            cwd=str(safe_cwd),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180.0)
     except TimeoutError as exc:

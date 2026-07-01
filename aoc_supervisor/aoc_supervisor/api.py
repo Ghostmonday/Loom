@@ -12,7 +12,6 @@ import json
 import os
 import queue
 import shlex
-import shlex
 import shutil
 import shlex
 import subprocess
@@ -812,24 +811,25 @@ def _spawn_worker_command(
 ) -> list[str]:
     mock_grid = os.environ.get("GAIJINN_MOCK_GRID", "").strip().lower() in {"1", "true", "yes", "on"}
     if mock_grid:
-        bash_path = shutil.which("bash") or "/bin/bash"
+        bash_exe = shutil.which("bash") or "bash"
+        quoted_name = shlex.quote(worker_name)
         if not has_assigned_work:
-            script = 'echo "[$1] standby — no work assigned";'
-            return [bash_path, "-c", script, "--", worker_name]
+            script = f"echo '[{quoted_name}] standby — no work assigned';"
+            return [bash_exe, "-c", script]
         script = (
-            'echo "=== MOCK GRID: $1 ==="; '
+            f"echo '=== MOCK GRID: {quoted_name} ==='; "
             "for step in 1 2 3 4 5; do "
-            'echo "[$1] working step $step"; '
+            f'echo "[{quoted_name}] working step $step"; '
             "sleep 0.4; "
             "done; "
-            'echo "[$1] build PASS";'
+            f"echo '[{quoted_name}] build PASS';"
         )
-        return [bash_path, "-c", script, "--", worker_name]
+        return [bash_exe, "-c", script]
 
-    codex_path = shutil.which("codex") or "codex"
+    codex_exe = shutil.which("codex") or "codex"
     last_message = worker_dir / "codex-last-message.txt"
     return [
-        codex_path,
+        codex_exe,
         "exec",
         "-C",
         str(resolved_worker_dir),
@@ -1695,11 +1695,13 @@ def _guard_session_access(session_id: str, user_id: str) -> None:
 def _safe_argv_for_log(cmd: list[str]) -> str:
     if not cmd:
         return ""
+    import shlex
+
     safe = list(cmd)
     if safe and len(safe[-1]) > 120:
         digest = hashlib.sha256(safe[-1].encode("utf-8")).hexdigest()[:16]
         safe[-1] = f"<prompt len={len(cmd[-1])} sha256={digest}>"
-    return " ".join(safe)
+    return " ".join(shlex.quote(arg) for arg in safe)
 
 
 def _prompt_digest(text: str) -> str:
@@ -2434,14 +2436,11 @@ async def hermes_chat(request: Request) -> dict[str, Any]:
     )
 
     hermes_model = os.environ.get("HERMES_DEFAULT_MODEL", "").strip()
-    if hermes_model and hermes_model not in ALLOWED_MODELS:
-        hermes_model = ""
-
-    hermes_path = shutil.which("hermes") or "hermes"
-    hermes_cmd: list[str] = [hermes_path]
+    hermes_exe = shutil.which("hermes") or "hermes"
+    hermes_cmd: list[str] = [hermes_exe]
     if hermes_model:
         hermes_cmd.extend(["-m", hermes_model])
-    hermes_cmd.extend(["--", prompt])
+    hermes_cmd.extend(["-z", "--", prompt])
 
     try:
         # Ensure ROOT_DIR is absolute and resolved
@@ -2450,7 +2449,7 @@ async def hermes_chat(request: Request) -> dict[str, Any]:
             *hermes_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(safe_cwd),
+            cwd=str(ROOT_DIR.resolve()),
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=180.0)
     except TimeoutError as exc:

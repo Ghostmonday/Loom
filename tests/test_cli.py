@@ -28,6 +28,7 @@ def test_cli_help_shows_available_commands() -> None:
         "scan",
         "compile-prompt",
         "run-grid",
+        "run-pipeline",
         "collect",
         "validate-worker",
         "merge-grid",

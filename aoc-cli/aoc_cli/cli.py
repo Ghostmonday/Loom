@@ -26,6 +26,7 @@ from .commands.merge_grid import merge_grid_cmd
 from .commands.monitor import monitor_cmd
 from .commands.plan import plan_cmd
 from .commands.run_grid import run_grid_cmd
+from .commands.run_pipeline import run_pipeline_cmd
 from .commands.scan import scan_cmd
 from .commands.status import status_cmd
 from .commands.validate_worker import validate_worker_cmd
@@ -169,6 +170,26 @@ def run_grid(
 ) -> None:
     """Create isolated worker directories under .gaijinn/workers/."""
     run_grid_cmd(workers, force, bootstrap_single_worker)
+
+
+@app.command("run-pipeline")
+def runtime_pipeline(
+    input_path: Path = typer.Argument(
+        ...,
+        help="JSON input file for the minimal resolution-backed runtime pipeline.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print the stable machine-readable runtime result.",
+    ),
+) -> None:
+    """Run input -> resolution_v3 -> work units -> mock execution."""
+    run_pipeline_cmd(input_path, json_output)
 
 
 @app.command()

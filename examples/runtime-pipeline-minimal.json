@@ -1,0 +1,21 @@
+{
+  "intent": "Run the minimal resolver-backed pipeline",
+  "nodes": [
+    {
+      "id": "Api",
+      "status": "KNOWN",
+      "type": "service",
+      "layer": 1,
+      "root_permitted": true,
+      "sink_permitted": false
+    }
+  ],
+  "edges": [
+    {
+      "u": "Api",
+      "v": "AuditLog",
+      "modality": "REQ",
+      "label": "writes_to"
+    }
+  ]
+}

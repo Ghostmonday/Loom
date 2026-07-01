@@ -40,6 +40,7 @@ from ..helpers.merge import (
     write_merge_governance,
     write_merge_json,
 )
+from ..state import transition_worker_state
 
 MergeStrategy = Callable[..., dict[str, Any]]
 
@@ -153,7 +154,6 @@ def _sequential_merge(
         manifest_path = workers_path / "manifest.json"
 
         if dry_run:
-            from ..state import transition_worker_state
             transition_worker_state(manifest_path, worker_id, "merged")
             worker_results[worker_id] = {"status": "merged", "merge_commit": "dry-run", "dry_run": True}
             merged_sequence.append(worker_id)
@@ -165,7 +165,6 @@ def _sequential_merge(
             changed = worker_collected.get("changed_files", []) if isinstance(worker_collected, dict) else []
             if not isinstance(changed, list) or not changed:
                 if _units_already_merged(project_root, assigned_units):
-                    from ..state import transition_worker_state
                     transition_worker_state(manifest_path, worker_id, "already_merged")
                     worker_results[worker_id] = {
                         "status": "already_merged",
@@ -174,7 +173,6 @@ def _sequential_merge(
                     }
                     already_merged_count += 1
                     continue
-                from ..state import transition_worker_state
                 transition_worker_state(manifest_path, worker_id, "blocked")
                 worker_results[worker_id] = {
                     "status": "blocked",
@@ -184,7 +182,6 @@ def _sequential_merge(
                 continue
             applied = apply_copy_mode_worker_changes(worker_dir, project_root, changed)
             if not applied:
-                from ..state import transition_worker_state
                 transition_worker_state(manifest_path, worker_id, "blocked")
                 worker_results[worker_id] = {
                     "status": "blocked",
@@ -192,7 +189,6 @@ def _sequential_merge(
                 }
                 blocked_count += 1
                 continue
-            from ..state import transition_worker_state
             transition_worker_state(manifest_path, worker_id, "merged")
             worker_results[worker_id] = {
                 "status": "merged",
@@ -211,7 +207,6 @@ def _sequential_merge(
         try:
             success, commit, _conflicts = merge_worker_branch(project_root, str(branch), dry_run=False)
         except ConflictError as exc:
-            from ..state import transition_worker_state
             transition_worker_state(manifest_path, worker_id, "conflicted")
             worker_results[worker_id] = {
                 "status": "conflicted",
@@ -221,7 +216,6 @@ def _sequential_merge(
             continue
 
         if not success:
-            from ..state import transition_worker_state
             transition_worker_state(manifest_path, worker_id, "blocked")
             worker_results[worker_id] = {"status": "blocked", "reason": "merge failed"}
             blocked_count += 1
@@ -231,13 +225,11 @@ def _sequential_merge(
             tests_ok, _output = run_post_merge_checks(project_root)
             if not tests_ok:
                 revert_last_merge(project_root)
-                from ..state import transition_worker_state
                 transition_worker_state(manifest_path, worker_id, "blocked")
                 worker_results[worker_id] = {"status": "blocked", "reason": "tests failed after merge"}
                 blocked_count += 1
                 continue
 
-        from ..state import transition_worker_state
         transition_worker_state(manifest_path, worker_id, "merged")
         worker_results[worker_id] = {"status": "merged", "merge_commit": commit}
         ledger_entries_written += upsert_completion_ledger_entries(

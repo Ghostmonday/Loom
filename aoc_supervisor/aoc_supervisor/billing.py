@@ -386,23 +386,6 @@ def deduct_compute_costs(
         return float(cost)
 
 
-@contextmanager
-def _locked_ledger(
-    storage_provider: LedgerStorageProvider | None = None,
-) -> Iterator[dict[str, Any]]:
-    storage = _resolve_storage_provider(storage_provider)
-    with storage.locked_ledger() as ledger:
-        yield ledger
-
-
-def _read_ledger() -> dict[str, Any]:
-    return DEFAULT_LEDGER_STORAGE.read_ledger()
-
-
-def _write_ledger(ledger: dict[str, Any]) -> None:
-    DEFAULT_LEDGER_STORAGE.write_ledger(ledger)
-
-
 def _resolve_storage_provider(
     storage_provider: LedgerStorageProvider | None,
 ) -> LedgerStorageProvider:

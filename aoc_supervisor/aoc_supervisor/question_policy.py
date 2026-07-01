@@ -58,19 +58,6 @@ PROFILE_AUTO_NA: dict[str, set[str]] = {
 }
 
 
-def _answered_domains(state: dict[str, Any]) -> set[str]:
-    answered: set[str] = set()
-    for entry in state.get("questions_and_answers", []):
-        if not isinstance(entry, dict):
-            continue
-        if entry.get("superseded_by"):
-            continue
-        domain = str(entry.get("domain", "")).strip()
-        if domain:
-            answered.add(domain)
-    return answered
-
-
 def infer_prompt_tags(prompt: str) -> set[str]:
     lowered = prompt.strip().lower()
     if not lowered:
@@ -158,8 +145,6 @@ def rank_candidate_domains(state: dict[str, Any]) -> list[str]:
         meta = coverage.get(domain, {}) if isinstance(coverage, dict) else {}
         if isinstance(meta, dict) and meta.get("na"):
             continue
-        if domain in _answered_domains(state):
-            continue
         candidates.append(domain)
     return candidates
 
@@ -196,6 +181,5 @@ __all__ = [
     "build_next_question",
     "get_analysis_recovery",
     "infer_prompt_tags",
-    "rank_candidate_domains",
     "should_stop_questioning",
 ]

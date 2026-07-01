@@ -8,14 +8,13 @@ are attached to one IDE folder. Use separate worktrees.
 
 | Path | Branch | Role |
 |------|--------|------|
-| `/home/ghostmonday/Desktop/Loom` | `main` | Canonical integration worktree |
 | `/home/ghostmonday/Desktop/Loom-codex` | `codex/a3-d2-proposal-boundary` | Codex implementation worktree |
 
 No DeepSeek worktree is currently active. The former
 `/home/ghostmonday/Desktop/Loom-deepseek` checkout was removed after its audit
 and safe-cleanup work merged into `main`.
 
-`origin/main` is the only canonical remote branch unless the user explicitly
+`origin/main` is the integration branch unless the user explicitly
 asks for a review branch to be pushed.
 
 ## Why This Exists
@@ -30,12 +29,11 @@ same repository history.
 ## Agent Rules
 
 1. Work only in your assigned worktree.
-2. Do not switch branches in `/home/ghostmonday/Desktop/Loom`.
-3. Do not edit another agent's worktree.
-4. Do not merge or rebase unless explicitly assigned.
-5. Do not push local agent branches unless explicitly assigned.
-6. Preserve untracked files unless the owner says they are disposable.
-7. Keep changes scoped to the branch mission.
+2. Do not edit another agent's worktree.
+3. Do not merge or rebase unless explicitly assigned.
+4. Do not push local agent branches unless explicitly assigned.
+5. Preserve untracked files unless the owner says they are disposable.
+6. Keep changes scoped to the branch mission.
 
 ## Start Checklist
 

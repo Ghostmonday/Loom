@@ -32,7 +32,6 @@ paste verification commands and exact pass/skip/warning counts here
 ## Isolation Check
 
 - [ ] I worked only in my assigned worktree
-- [ ] I did not switch the canonical `main` worktree away from `main`
 - [ ] I did not modify another agent's worktree
 - [ ] I did not merge, rebase, push, or delete branches outside this PR's scope
 - [ ] Unrelated dirty or untracked files are listed below

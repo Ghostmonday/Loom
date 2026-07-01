@@ -3,16 +3,9 @@
 This repository supports concurrent AI work through separate git worktrees.
 Do not simulate isolation by switching branches inside another agent's folder.
 
-## Canonical Worktree
-
-- `/home/ghostmonday/Desktop/Loom` is the canonical `main` worktree.
-- Keep it clean and synced with `origin/main`.
-- Do not perform feature work here unless the user explicitly assigns this folder.
-- Use this folder for final integration, verification, and merge checkpoints.
-
 ## Active Agent Worktrees
 
-- Codex worktree: `/home/ghostmonday/Desktop/Loom-codex`
+- Codex worktree: `/home/ghostmonday/Desktop/Loom-codex` (primary workspace)
 
 No DeepSeek worktree is currently active. Create a new sibling worktree for any
 future DeepSeek assignment instead of reusing stale paths from old reports.
@@ -42,7 +35,6 @@ Stop and report if:
 - One branch has one owner and one scope.
 - Do not merge, rebase, push, or delete branches unless the user or merge
   captain explicitly asks.
-- Do not switch the canonical `main` worktree away from `main`.
 - Never use destructive cleanup commands to "fix" another agent's state.
 - Preserve unrelated dirty or untracked files.
 

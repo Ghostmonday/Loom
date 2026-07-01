@@ -10,7 +10,10 @@ are attached to one IDE folder. Use separate worktrees.
 |------|--------|------|
 | `/home/ghostmonday/Desktop/Loom` | `main` | Canonical integration worktree |
 | `/home/ghostmonday/Desktop/Loom-codex` | `codex/a3-d2-proposal-boundary` | Codex implementation worktree |
-| `/home/ghostmonday/Desktop/Loom-deepseek` | `audit/code-hygiene-pass` | DeepSeek audit worktree |
+
+No DeepSeek worktree is currently active. The former
+`/home/ghostmonday/Desktop/Loom-deepseek` checkout was removed after its audit
+and safe-cleanup work merged into `main`.
 
 `origin/main` is the only canonical remote branch unless the user explicitly
 asks for a review branch to be pushed.
@@ -68,7 +71,7 @@ Examples:
 
 ```bash
 git worktree add -b codex/a3-d2-proposal-boundary /home/ghostmonday/Desktop/Loom-codex main
-git worktree add -b audit/code-hygiene-pass /home/ghostmonday/Desktop/Loom-deepseek main
+git worktree add -b deepseek/<short-task-name> /home/ghostmonday/Desktop/Loom-deepseek main
 ```
 
 ## Integration Rules
@@ -100,13 +103,10 @@ After merge, rerun the verification appropriate to the touched scope. Push
 ## Keeping Worktrees Current
 
 If `main` receives an operations-only update that every agent should inherit,
-fast-forward each clean agent worktree:
+fast-forward each clean active agent worktree:
 
 ```bash
 cd /home/ghostmonday/Desktop/Loom-codex
-git merge --ff-only main
-
-cd /home/ghostmonday/Desktop/Loom-deepseek
 git merge --ff-only main
 ```
 
@@ -130,5 +130,6 @@ Delete remote branches only after confirming the merged commit exists on
 
 - Codex owns A3/D2 LLM Proposal Boundary planning and implementation work in
   `Loom-codex`.
-- DeepSeek owns code-hygiene audit reporting in `Loom-deepseek`.
+- DeepSeek has no active worktree. Assign new DeepSeek work by creating a fresh
+  sibling worktree from current `main`.
 - The canonical `Loom` folder is for integration and should stay clean.

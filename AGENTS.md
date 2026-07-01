@@ -13,7 +13,9 @@ Do not simulate isolation by switching branches inside another agent's folder.
 ## Active Agent Worktrees
 
 - Codex worktree: `/home/ghostmonday/Desktop/Loom-codex`
-- DeepSeek worktree: `/home/ghostmonday/Desktop/Loom-deepseek`
+
+No DeepSeek worktree is currently active. Create a new sibling worktree for any
+future DeepSeek assignment instead of reusing stale paths from old reports.
 
 Each agent should work only inside its assigned worktree. If you need a new
 branch, create a new sibling worktree instead of switching branches in place.

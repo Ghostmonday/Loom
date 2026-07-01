@@ -74,3 +74,5 @@ vaults/gaijinn-memory-fs/metadata.json
 vaults/gaijinn-memory-fs/WORKER_INTENT.txt
 vaults/gaijinn-memory-fs/output.log
 .worktrees/
+.venv-py/
+get-pip.py

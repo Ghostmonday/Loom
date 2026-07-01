@@ -87,7 +87,7 @@ def test_mock_grid_idle_command_does_not_fake_success(monkeypatch: pytest.Monkey
         model="test",
         has_assigned_work=False,
     )
-    script = cmd[-1]
+    script = " ".join(cmd)
     assert "standby — no work assigned" in script
     assert "build PASS" not in script
 

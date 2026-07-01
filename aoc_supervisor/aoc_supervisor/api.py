@@ -803,20 +803,20 @@ def _spawn_worker_command(
     mock_grid = os.environ.get("GAIJINN_MOCK_GRID", "").strip().lower() in {"1", "true", "yes", "on"}
     if mock_grid:
         if not has_assigned_work:
-            script = f"echo [{shlex.quote(worker_name)}] standby — no work assigned"
-            return ["bash", "-c", script]
+            return ["bash", "-c", 'echo "[$1] standby — no work assigned"', "--", worker_name]
         script = (
-            f"echo === MOCK GRID: {shlex.quote(worker_name)} ===; "
+            'echo "=== MOCK GRID: $1 ==="; '
             "for step in 1 2 3 4 5; do "
-            f"echo \"[{shlex.quote(worker_name)}] working step $step\"; "
+            'echo "[$1] working step $step"; '
             "sleep 0.4; "
             "done; "
-            f"echo \"[{shlex.quote(worker_name)}] build PASS\";"
+            'echo "[$1] build PASS";'
         )
-        return ["bash", "-c", script]
+        return ["bash", "-c", script, "--", worker_name]
 
     codex_bin = shutil.which("codex") or "codex"
     last_message = worker_dir / "codex-last-message.txt"
+    codex_bin = shutil.which("codex") or "codex"
     return [
         codex_bin,
         "exec",
@@ -2392,7 +2392,8 @@ async def council_say(request: Request) -> dict[str, Any]:
 @app.post("/api/v1/hermes/chat")
 async def hermes_chat(request: Request) -> dict[str, Any]:
     """Run a one-shot Hermes session from the Gaijinn terminal chat."""
-    if shutil.which("hermes") is None:
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin is None:
         raise HTTPException(status_code=503, detail="hermes executable not found on PATH")
 
     try:
@@ -2417,11 +2418,10 @@ async def hermes_chat(request: Request) -> dict[str, Any]:
     )
 
     hermes_model = os.environ.get("HERMES_DEFAULT_MODEL", "").strip()
-    hermes_bin = shutil.which("hermes") or "hermes"
     hermes_cmd: list[str] = [hermes_bin]
     if hermes_model:
         hermes_cmd.extend(["-m", hermes_model])
-    hermes_cmd.extend(["--", "-z", prompt])
+    hermes_cmd.extend(["--", prompt])
 
     try:
         proc = await asyncio.create_subprocess_exec(

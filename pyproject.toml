@@ -73,10 +73,6 @@ exclude = [
     "vaults/gaijinn-memory-fs",
     "apply_innovations.py",
     "final_patch.py",
-    "fix_merge.py",
-    "patch_api.py",
-    "patch_script.py",
-    "patch_script_v2.py",
 ]
 
 [tool.ruff.lint]

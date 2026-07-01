@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 import typer
@@ -50,8 +51,6 @@ def council_show_cmd(json_output: bool, tail: int, global_council: bool) -> None
             _require_project_state()
         ensure_council(global_council=global_council)
         if json_output:
-            import json
-
             entries = load_messages(global_council=global_council)
             if tail > 0:
                 entries = entries[-tail:]

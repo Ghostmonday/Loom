@@ -27,7 +27,7 @@ import json
 import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .giv import GIV
@@ -231,8 +231,6 @@ def stable_work_unit_id(allowed_paths: Sequence[str], acceptance_checks: Sequenc
 
 def resolve_work_unit_domain(allowed_paths: Sequence[str]) -> str:
     """Resolve a work-unit domain once from its allowed path prefixes."""
-    from pathlib import Path
-
     from .helpers.project_profile import is_obsidian_vault
 
     normalized = [_normalize_path(str(path)) for path in allowed_paths]
@@ -997,8 +995,6 @@ def _denied_paths(giv: GIV, allowed_paths: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _acceptance_checks(giv: GIV, *, high_risk: bool) -> tuple[str, ...]:
-    from pathlib import Path
-
     from .helpers.project_profile import is_obsidian_vault
 
     if is_obsidian_vault(Path.cwd()):

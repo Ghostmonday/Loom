@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
 import pytest
 from aoc_supervisor.orchestration_envelope import (
@@ -19,6 +21,22 @@ FIXTURE_PATH = REPO_ROOT / "tests" / "fixtures" / "deliberation_canonical_sequen
 @pytest.fixture
 def journal() -> OrchestrationJournal:
     return OrchestrationJournal(correlation_id="delib-test", session_id="delib-test")
+
+
+@pytest.fixture
+def valid_event() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "event_id": "evt_123",
+        "sequence": 0,
+        "emitted_at": "2023-10-27T12:00:00Z",
+        "session_id": "sess-123",
+        "correlation_id": "corr-123",
+        "phase": "blueprinting",
+        "classification": "guided",
+        "event_type": "phase.begin",
+        "data": {"provisional_session": True},
+    }
 
 
 class TestLegacyMapping:
@@ -97,3 +115,55 @@ class TestSchemaValidation:
         assert event_type == "phase.progress"
         assert phase == "blueprinting"
         assert classification == "guided"
+
+    def test_missing_required_field(self, valid_event):
+        del valid_event["event_id"]
+        with pytest.raises(
+            ValueError, match="orchestration event failed schema validation: .*'event_id' is a required property"
+        ):
+            validate_orchestration_event(valid_event)
+
+    def test_invalid_type(self, valid_event):
+        valid_event["sequence"] = "not-an-int"
+        with pytest.raises(
+            ValueError, match="orchestration event failed schema validation: .*'not-an-int' is not of type 'integer'"
+        ):
+            validate_orchestration_event(valid_event)
+
+    def test_invalid_event_type(self, valid_event):
+        valid_event["event_type"] = "invalid.type"
+        with pytest.raises(
+            ValueError, match="orchestration event failed schema validation: .*'invalid.type' is not one of"
+        ):
+            validate_orchestration_event(valid_event)
+
+    def test_data_mismatch_for_event_type(self, valid_event):
+        valid_event["event_type"] = "topology.node.upsert"
+        valid_event["data"] = {"wrong": "fields"}
+        with pytest.raises(
+            ValueError, match="orchestration event failed schema validation: .*'node_id' is a required property"
+        ):
+            validate_orchestration_event(valid_event)
+
+    def test_multiple_errors_limit_and_sorting(self, valid_event):
+        del valid_event["event_id"]
+        del valid_event["session_id"]
+        valid_event["sequence"] = -1
+        valid_event["schema_version"] = 2
+
+        with pytest.raises(ValueError) as excinfo:
+            validate_orchestration_event(valid_event)
+
+        message = str(excinfo.value)
+        assert message.count("; ") <= 2
+        assert "orchestration event failed schema validation: " in message
+        assert (
+            "is a required property" in message
+            or "is less than the minimum" in message
+            or "not equal to 1" in message
+        )
+
+    def test_validator_none_returns_early(self, valid_event):
+        with patch("aoc_supervisor.orchestration_envelope._validator", return_value=None):
+            del valid_event["event_id"]
+            validate_orchestration_event(valid_event)

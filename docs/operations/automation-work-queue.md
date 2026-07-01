@@ -28,6 +28,7 @@
 | PARTIAL | `flow.loom_interrogation_adaptive_paid` | open | mirror `question.submit_answer` dispatch — next backend slice |
 | LOOM-210 | continuation+launch code | blocked | until C20 on main |
 | SQ | skill sanity side quest | ⏳ | optional report |
+| CLEAN | repo clean-room (`cleanup/composer-parallel-sweep`) | ✅ branch | legacy `ui/*.html` removed; contracts aligned; 882 tests green |
 
 ---
 

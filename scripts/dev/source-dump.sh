@@ -5,7 +5,7 @@
 #   bash scripts/dev/source-dump.sh ~/Desktop/LOOMFILES2.md
 #
 # Full mode preserves the old complete text-only source dump behavior:
-#   bash scripts/dev/source-dump.sh --full ~/Desktop/gaijinn-source-dump.txt
+#   bash scripts/dev/source-dump.sh --full ~/Desktop/loom-source-dump.txt
 #
 # Never embed binaries in text dumps.
 set -euo pipefail

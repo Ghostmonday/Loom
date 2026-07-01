@@ -8,7 +8,7 @@
 
 ## NO UI until backend green
 
-**Do not create** `ui/terminal.*`, `ui/intent-forge.*`, `ui/command-engine.*`. All routes serve `placeholder.html`.  
+**Do not create** `ui/terminal.*`, `ui/intent-forge.*`, `ui/command-engine.*`. Runtime HTML lives in `sandbox_frontend/` per `repo_paths.py`.  
 UI slices **C12–C17 are deferred** until `flow.loom_full_pipeline_mock` passes in mirror (C19).
 
 ## Rules

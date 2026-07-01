@@ -2,7 +2,7 @@
 
 ## You broke it last time. Do not do that again.
 
-The Desktop file `gaijinn-source-dump.txt` was **corrupted** because you stuffed **binary data into a text file**:
+The Desktop file `loom-source-dump.txt` (legacy name: `gaijinn-source-dump.txt`) was **corrupted** because you stuffed **binary data into a text file**:
 
 - **79,638 null bytes**
 - **705 binary sections** (git objects, SQLite, `.coverage`)

@@ -3,15 +3,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-try:
+if sys.version_info >= (3, 11):
     import tomllib
-except ImportError:
-    # tomllib was added in Python 3.11
-    # For older versions, we might need a fallback if it's installed
-    try:
-        import tomli as tomllib
-    except ImportError:
-        tomllib = None
+else:
+    import tomli as tomllib
 
 
 @pytest.mark.skipif(tomllib is None, reason="tomllib (Python 3.11+) or tomli required to run this test")

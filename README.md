@@ -320,7 +320,7 @@ That writes `~/Desktop/LOOMFILES2.md` plus `~/Desktop/LOOMFILES2.md.gz`.
 Use full archival mode only when you truly need byte-heavy completeness:
 
 ```bash
-bash scripts/dev/source-dump.sh --full ~/Desktop/gaijinn-source-dump.txt
+bash scripts/dev/source-dump.sh --full /home/ghostmonday/Desktop/Loom-source-dump.txt
 ```
 
 Curated mode deduplicates content-identical text files, skips empty scratch JSON, records recent commits and git status, and keeps the dump focused on files a new model can absorb quickly.

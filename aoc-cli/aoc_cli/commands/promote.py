@@ -16,6 +16,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -36,10 +37,14 @@ def _find_vault_root(cwd: Path) -> Path | None:
         if gaijinn_dir.is_dir() and (gaijinn_dir / "bridge" / "council.md").exists():
             return parent
 
-    # Check known vault paths
+    # Check known vault paths (repo-relative + optional override)
+    repo_root = Path(__file__).resolve().parents[3]
     known_vaults = [
-        Path.home() / "workspace" / "github.com" / "ghost-monday" / "Gaijinn" / "vaults" / "gaijinn-memory-fs",
+        repo_root / "vaults" / "gaijinn-memory-fs",
     ]
+    env_vault = Path(v) if (v := os.environ.get("GAIJINN_VAULT_ROOT")) else None
+    if env_vault is not None:
+        known_vaults.insert(0, env_vault)
     for v in known_vaults:
         if v.exists() and (v / ".gaijinn").is_dir():
             return v

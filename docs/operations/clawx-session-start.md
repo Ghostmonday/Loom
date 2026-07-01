@@ -33,7 +33,7 @@ SESSION START: reading ops docs + syncing main
 ## Step 2 — Sync repo
 
 ```bash
-cd ~/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 git checkout main
 git pull origin main
 git log --oneline -5
@@ -47,7 +47,7 @@ Report: branch, HEAD commit, clean or dirty.
 ## Step 3 — Verify environment (always .venv)
 
 ```bash
-cd ~/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 test -x .venv/bin/python || { echo "BLOCKER: no .venv"; exit 1; }
 .venv/bin/python -m pytest --version
 export PYTHONPATH="aoc-cli:aoc_supervisor:${PYTHONPATH}"
@@ -56,7 +56,7 @@ export GAIJINN_MOCK_GRID=1 GAIJINN_FAKE_REASONING=1 GAIJINN_ALLOW_INSECURE_LOCAL
 
 **Never use system `python` for pytest.** Always `.venv/bin/python`.
 
-**Snap terminals** set `SNAP` globally — repo `.venv` must still be used for `gaijinn` subprocesses. If needed: `export GAIJINN_PYTHON=~/Desktop/gaijinn/.venv/bin/python`.
+**Snap terminals** set `SNAP` globally — repo `.venv` must still be used for `gaijinn` subprocesses. If needed: `export GAIJINN_PYTHON=/home/ghostmonday/Desktop/Loom/.venv/bin/python`.
 
 ---
 

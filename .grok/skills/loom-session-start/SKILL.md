@@ -27,7 +27,7 @@ Source dump tasks: also `docs/operations/deepseek-source-dump-rules.md` and `loo
 ## Sync
 
 ```bash
-cd ~/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 git checkout main && git pull origin main
 git log --oneline -5
 git status -sb

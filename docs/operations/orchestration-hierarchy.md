@@ -43,7 +43,7 @@ CODEX        → one slice = one implementation (cheapest bulk coding)
 ## Claw X standard loop (every slice)
 
 ```bash
-cd /home/ghostmonday/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 git pull --rebase 2>/dev/null || true
 export PYTHONPATH="aoc-cli:aoc_supervisor:${PYTHONPATH}"
 export GAIJINN_MOCK_GRID=1 GAIJINN_FAKE_REASONING=1 GAIJINN_ALLOW_INSECURE_LOCAL=1

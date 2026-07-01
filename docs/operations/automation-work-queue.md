@@ -170,7 +170,7 @@
 PR #36 / `fix/snap-venv-and-session-start`: StrEnum Python 3.10 CI may still fail — OPS owns verify; Director recommends merge only after green CI and Amir says merge.
 
 ```bash
-cd ~/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 export PYTHONPATH="aoc-cli:aoc_supervisor:${PYTHONPATH}"
 export GAIJINN_MOCK_GRID=1 GAIJINN_FAKE_REASONING=1 GAIJINN_ALLOW_INSECURE_LOCAL=1
 .venv/bin/python -m pytest tests/test_loom_mirror_forge.py::test_full_pipeline_mock \

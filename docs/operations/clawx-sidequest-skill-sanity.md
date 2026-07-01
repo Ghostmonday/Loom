@@ -2,7 +2,7 @@
 
 **Run once before Wave 2.** Do not skip. Takes ~15 min.  
 **Skills:** `loom-intent-mapping-v2` only (`~/.openclaw/skills/loom-intent-mapping-v2/`). Do NOT load v1.  
-**Repo:** `/home/ghostmonday/Desktop/gaijinn` branch `main`
+**Repo:** `/home/ghostmonday/Desktop/Loom` branch `main`
 
 ## Why
 
@@ -20,7 +20,7 @@ Prove the skill works on **real code**, not sandbox fiction. If you cannot verif
 
 ## Steps (follow skill mapping loop)
 
-1. `cd ~/Desktop/gaijinn && git checkout main && git pull`
+1. `cd /home/ghostmonday/Desktop/Loom && git checkout main && git pull`
 2. Load `SKILL.md` + `references/backend.md` + `references/frontend.md` + `references/tests.md`
 3. Read `ui/gaijinn-ui-intent-map.json` actions `grid.poll_status` + elements `sprint.status`
 4. Open `merge.py::classify_worker_status` — confirm binding (do not invent module path)

@@ -1,7 +1,7 @@
 # DeepSeek roadmap — Loom to project complete
 
 **For:** Claw X (DeepSeek v4) + Codex (+ optional second Codex instance)  
-**Repo:** `/home/ghostmonday/Desktop/gaijinn`  
+**Repo:** `/home/ghostmonday/Desktop/Loom`  
 **Branch:** `main`  
 **Composer:** gates only — user escalates on blockers
 
@@ -45,7 +45,7 @@ Codex does **not** improvise architecture. Each slice implements **one** declare
 ### Preflight (Claw X runs before every `codex exec`)
 
 ```bash
-cd /home/ghostmonday/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 git checkout main && git pull
 # 1. Read task doc + the action(s) it references in loom-pipeline-intent-map.json
 # 2. Read algorithm_binding module/entrypoint — open that file in repo
@@ -128,7 +128,7 @@ handoff.accept
 ### After every wave — Claw X confusion check
 
 ```bash
-cd /home/ghostmonday/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 .venv/bin/python -m pytest tests/test_loom_pipeline_intent.py tests/test_loom_teleology.py \
   tests/test_loom_synthesizer.py tests/test_loom_mirror_forge.py -q --no-cov
 ```
@@ -256,7 +256,7 @@ Smoke targets:
 ## Standard Codex loop (every slice)
 
 ```bash
-cd /home/ghostmonday/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 export PYTHONPATH="aoc-cli:aoc_supervisor:${PYTHONPATH}"
 export GAIJINN_MOCK_GRID=1 GAIJINN_FAKE_REASONING=1 GAIJINN_ALLOW_INSECURE_LOCAL=1
 mkdir -p .gaijinn/codex
@@ -307,7 +307,7 @@ Composer needed: yes/no
 
 ```
 Load loom-codex-delegate, loom-intent-mapping-v2.
-Read ~/Desktop/gaijinn/docs/operations/deepseek-roadmap-to-completion.md
+Read /home/ghostmonday/Desktop/Loom/docs/operations/deepseek-roadmap-to-completion.md
 Follow "Preflight" + append ENFORCEMENT block to every codex exec.
 Continue from first incomplete wave. Use both Codex instances for parallel slices.
 After each wave run confusion check. Commit when verify green. Report wave template.

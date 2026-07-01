@@ -18,7 +18,7 @@ C01–C11, C18–C23, C21 — see queue for verify notes
 ## Environment
 
 ```bash
-cd ~/Desktop/gaijinn
+cd /home/ghostmonday/Desktop/Loom
 .venv/bin/python -m pytest ...
 export PYTHONPATH="aoc-cli:aoc_supervisor:${PYTHONPATH}"
 export GAIJINN_MOCK_GRID=1 GAIJINN_FAKE_REASONING=1 GAIJINN_ALLOW_INSECURE_LOCAL=1

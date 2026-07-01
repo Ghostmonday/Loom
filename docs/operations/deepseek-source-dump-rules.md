@@ -27,8 +27,8 @@ That happened because you dumped `.gaijinn/sessions/*/.git/objects/*` and other 
 ## The only approved command
 
 ```bash
-cd ~/Desktop/gaijinn
-bash scripts/dev/source-dump.sh ~/Desktop/gaijinn-source-dump.txt
+cd /home/ghostmonday/Desktop/Loom
+bash scripts/dev/source-dump.sh /home/ghostmonday/Desktop/Loom-source-dump.txt
 ```
 
 Script must print: `0 null bytes`. If it does not, **stop and report** — do not give the user the file.

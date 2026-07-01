@@ -7,8 +7,11 @@ proposal to worker scope is ``evaluate_boundary`` producing a
 
 from __future__ import annotations
 
+import builtins
 import json
 import os
+import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -412,36 +415,12 @@ def ingest_raw_semantic_proposal(
     )
 
 
-def evaluate_boundary(
-    *,
+def _validate_proposal_items(
     raw_proposals: RawSemanticProposal,
-    canonical_graph: Sequence[Mapping[str, Any]],
-    static_scopes_by_node: dict[str, StaticNodeScope],
-    session_id: str,
-    curvature_floor: float = -0.30,
-    dark_bridge_min_confidence: float = 0.95,
-    min_confidence: float = 0.60,
-    overrides: Sequence[OverrideRecord] | None = None,
-    persist_path: Path | None = None,
-) -> VerifiedBoundaryDecision:
-    """Verify untrusted proposals and derive final worker scopes atomically."""
-
-    now = _utc_now()
-    node_by_key = {_node_key(node): node for node in canonical_graph if _node_key(node)}
-    proposal_tags = _proposal_tags(raw_proposals)
+    node_by_key: Mapping[str, Mapping[str, Any]],
+    min_confidence: float,
+) -> list[ViolationRecord]:
     violations: list[ViolationRecord] = []
-
-    if raw_proposals.malformed_count > 0:
-        violations.append(
-            _violation(
-                "raw_malformed",
-                "__raw__",
-                None,
-                f"raw semantic proposal contains {raw_proposals.malformed_count} malformed item(s)",
-                "blocked",
-            )
-        )
-
     for item in raw_proposals.items:
         if item.get("_malformed"):
             continue
@@ -512,7 +491,15 @@ def evaluate_boundary(
                     "blocked",
                 )
             )
+    return violations
 
+
+def _check_omitted_nodes(
+    raw_proposals: RawSemanticProposal,
+    node_by_key: Mapping[str, Mapping[str, Any]],
+    proposal_tags: Mapping[str, ProvisionalTag],
+) -> list[ViolationRecord]:
+    violations: list[ViolationRecord] = []
     # P1: Fail closed on omitted nodes — any canonical node absent from the LLM
     # proposal must generate a blocked violation rather than silently granting its
     # full static scope.  Deterministic proposals (source != "llm") are exempt.
@@ -528,7 +515,16 @@ def evaluate_boundary(
                         "blocked",
                     )
                 )
+    return violations
 
+
+def _check_dark_bridges(
+    canonical_graph: Sequence[Mapping[str, Any]],
+    proposal_tags: Mapping[str, ProvisionalTag],
+    curvature_floor: float,
+    dark_bridge_min_confidence: float,
+) -> list[ViolationRecord]:
+    violations: list[ViolationRecord] = []
     for edge in _dark_edges(canonical_graph):
         src = str(edge.get("source", edge.get("from", "")))
         dst = str(edge.get("target", edge.get("to", "")))
@@ -550,6 +546,61 @@ def evaluate_boundary(
                         "blocked",
                     )
                 )
+    return violations
+
+
+def _collect_deterministic_evidence(
+    node_by_key: Mapping[str, Mapping[str, Any]],
+    static_scopes_by_node: Mapping[str, StaticNodeScope],
+    curvature_floor: float,
+    dark_bridge_min_confidence: float,
+    min_confidence: float,
+) -> dict[str, Any]:
+    return {
+        "node_count": len(node_by_key),
+        "static_scope_count": len(static_scopes_by_node),
+        "curvature_floor": curvature_floor,
+        "dark_bridge_min_confidence": dark_bridge_min_confidence,
+        "min_confidence": min_confidence,
+        "mutation_reachability": {
+            key: classify_mutation_reachability(node) for key, node in sorted(node_by_key.items())
+        },
+    }
+
+
+def evaluate_boundary(
+    *,
+    raw_proposals: RawSemanticProposal,
+    canonical_graph: Sequence[Mapping[str, Any]],
+    static_scopes_by_node: dict[str, StaticNodeScope],
+    session_id: str,
+    curvature_floor: float = -0.30,
+    dark_bridge_min_confidence: float = 0.95,
+    min_confidence: float = 0.60,
+    overrides: Sequence[OverrideRecord] | None = None,
+    persist_path: Path | None = None,
+) -> VerifiedBoundaryDecision:
+    """Verify untrusted proposals and derive final worker scopes atomically."""
+
+    now = _utc_now()
+    node_by_key = {_node_key(node): node for node in canonical_graph if _node_key(node)}
+    proposal_tags = _proposal_tags(raw_proposals)
+    violations: list[ViolationRecord] = []
+
+    if raw_proposals.malformed_count > 0:
+        violations.append(
+            _violation(
+                "raw_malformed",
+                "__raw__",
+                None,
+                f"raw semantic proposal contains {raw_proposals.malformed_count} malformed item(s)",
+                "blocked",
+            )
+        )
+
+    violations.extend(_validate_proposal_items(raw_proposals, node_by_key, min_confidence))
+    violations.extend(_check_omitted_nodes(raw_proposals, node_by_key, proposal_tags))
+    violations.extend(_check_dark_bridges(canonical_graph, proposal_tags, curvature_floor, dark_bridge_min_confidence))
 
     applied_overrides = _matching_overrides(violations, overrides or (), session_id=session_id, now=now)
     unresolved_violations = [
@@ -576,16 +627,13 @@ def evaluate_boundary(
         violations=tuple(violations),
         raw_proposal=raw_proposals,
         policy_version=POLICY_VERSION,
-        deterministic_evidence={
-            "node_count": len(node_by_key),
-            "static_scope_count": len(static_scopes_by_node),
-            "curvature_floor": curvature_floor,
-            "dark_bridge_min_confidence": dark_bridge_min_confidence,
-            "min_confidence": min_confidence,
-            "mutation_reachability": {
-                key: classify_mutation_reachability(node) for key, node in sorted(node_by_key.items())
-            },
-        },
+        deterministic_evidence=_collect_deterministic_evidence(
+            node_by_key,
+            static_scopes_by_node,
+            curvature_floor,
+            dark_bridge_min_confidence,
+            min_confidence,
+        ),
         overrides_applied=tuple(applied_overrides),
         created_at=now,
         _token=_DECISION_TOKEN,
@@ -981,13 +1029,13 @@ def _atomic_write_json(target: Path, payload: Mapping[str, Any]) -> None:
 
 
 # dynamic filesystem boundary containment
-import sys
-import builtins
-import subprocess
+
 
 class MoatContainmentError(SafetyError):
     """Raised when a file system or boundary containment violation is detected."""
+
     pass
+
 
 _allowed_roots: list[Path] = []
 _original_open = builtins.open
@@ -995,9 +1043,11 @@ _original_os_open = os.open
 _original_popen = subprocess.Popen
 _original_run = subprocess.run
 
+
 def set_allowed_roots(roots: Sequence[str | Path]) -> None:
     global _allowed_roots
     _allowed_roots = [Path(r).resolve() for r in roots]
+
 
 def validate_path_containment(path: str | Path) -> None:
     if not _allowed_roots:
@@ -1025,6 +1075,7 @@ def validate_path_containment(path: str | Path) -> None:
             os._exit(1)
         raise MoatContainmentError(error_msg)
 
+
 def patch_file_operations(roots: Sequence[str | Path]) -> None:
     set_allowed_roots(roots)
 
@@ -1032,12 +1083,14 @@ def patch_file_operations(roots: Sequence[str | Path]) -> None:
         if isinstance(file, (str, Path)):
             validate_path_containment(file)
         return _original_open(file, *args, **kwargs)
+
     builtins.open = hooked_open
 
     def hooked_os_open(path, *args, **kwargs):
         if isinstance(path, (str, Path)):
             validate_path_containment(path)
         return _original_os_open(path, *args, **kwargs)
+
     os.open = hooked_os_open
 
     def hooked_popen(args, *pargs, **kwargs):
@@ -1053,6 +1106,7 @@ def patch_file_operations(roots: Sequence[str | Path]) -> None:
                     except Exception:
                         pass
         return _original_popen(args, *pargs, **kwargs)
+
     subprocess.Popen = hooked_popen
 
     def hooked_run(args, *pargs, **kwargs):
@@ -1068,7 +1122,9 @@ def patch_file_operations(roots: Sequence[str | Path]) -> None:
                     except Exception:
                         pass
         return _original_run(args, *pargs, **kwargs)
+
     subprocess.run = hooked_run
+
 
 def unpatch_file_operations() -> None:
     global _allowed_roots

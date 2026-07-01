@@ -283,6 +283,150 @@ def _ensure_grid_spawn_prerequisites(state: Any, workers: int) -> dict[str, Any]
     return manifest
 
 
+def _validate_grid_spawn_config(timeout: Any, executor: Any) -> tuple[int, str]:
+    if not isinstance(timeout, int):
+        timeout = 3600
+    if not isinstance(executor, str):
+        executor = "auto"
+    normalized_executor = executor.strip().lower() or "auto"
+    if normalized_executor not in {"auto", "codex"}:
+        raise GridSpawnError(
+            f"Unsupported executor: {executor}",
+            cause="grid-spawn currently supports Codex execution only",
+            fix_command="loom grid-spawn --executor codex --workers N",
+        )
+    return timeout, normalized_executor
+
+
+def _spawn_workers(
+    state: Any,
+    workers: int,
+    model: str,
+    manifest_path: Path,
+    blueprint: Any,
+    project_root: Path,
+) -> list[dict[str, Any]]:
+    from ..state import transition_worker_state
+
+    processes: list[dict[str, Any]] = []
+    for i in range(1, workers + 1):
+        worker_name = f"worker-{i:03d}"
+        worker_dir = state.workers_path / worker_name
+
+        giv = _read_worker_giv(worker_dir)
+        metadata = _read_worker_metadata(worker_dir)
+        work_unit_text = _read_worker_work_unit(worker_dir)
+        task_prompt = _build_task_prompt(
+            worker_name,
+            work_unit_text,
+            giv,
+            metadata,
+            blueprint=blueprint,
+            project_root=project_root,
+        )
+
+        transition_worker_state(manifest_path, worker_name, "executing")
+
+        typer.echo(f"  ▶  Spawning {worker_name}...")
+        proc = _spawn_worker(worker_name, worker_dir, task_prompt, model)
+
+        processes.append(
+            {
+                "name": worker_name,
+                "dir": worker_dir,
+                "proc": proc,
+                "started": time.time(),
+            }
+        )
+
+    if not processes:
+        raise SprintError(
+            "No workers spawned.",
+            cause="worker directories were missing",
+            fix_command="gaijinn run-grid --workers 2",
+        )
+    return processes
+
+
+def _monitor_workers(
+    processes: list[dict[str, Any]],
+    timeout: int,
+    manifest_path: Path,
+    model: str,
+) -> tuple[int, int]:
+    from ..state import transition_worker_state
+
+    completed = 0
+    failed = 0
+    for entry in processes:
+        proc = entry["proc"]
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            proc.kill()
+            proc.wait()
+        elapsed = time.time() - entry["started"]
+
+        if timed_out:
+            typer.echo(f"  ✘  {entry['name']}: TIMED OUT after {timeout}s")
+            failed += 1
+        elif proc.returncode == 0:
+            typer.echo(f"  ✔  {entry['name']}: completed in {elapsed:.1f}s")
+            completed += 1
+        else:
+            typer.echo(f"  ✘  {entry['name']}: FAILED (exit {proc.returncode}) in {elapsed:.1f}s")
+            failed += 1
+
+        try:
+            new_status = "timed_out" if timed_out else "completed" if proc.returncode == 0 else "failed"
+            transition_worker_state(manifest_path, entry["name"], new_status)
+
+            with manifest_path.open("r", encoding="utf-8") as mf:
+                current = json.load(mf)
+            for detail in current.get("worker_details", []):
+                if detail.get("worker_id") == entry["name"]:
+                    detail["elapsed_seconds"] = round(elapsed, 1)
+                    break
+            current["sprint"] = {
+                "atomic": True,
+                "cancel_supported": False,
+                "executor": "codex",
+                "model": model,
+                "completed": completed + failed,
+                "failed": failed,
+                "timeout_seconds": timeout,
+            }
+            _write_manifest_atomic(manifest_path, current)
+        except Exception as exc:
+            typer.echo(f"Warning: failed to update worker manifest at {manifest_path}: {exc}")
+
+    return completed, failed
+
+
+def _publish_handoffs(
+    processes: list[dict[str, Any]],
+    blueprint: Any,
+    project_root: Path,
+) -> None:
+    handoff_count = 0
+    for entry in processes:
+        log_path = entry["dir"] / OUTPUT_LOG_FILENAME
+        if not log_path.exists():
+            continue
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+        published = publish_handoff_tickets_from_log(
+            entry["name"],
+            log_text,
+            blueprint,
+            project_root=project_root,
+        )
+        handoff_count += len(published)
+    if handoff_count:
+        typer.echo(f"Handoff bus: {handoff_count} transaction(s) published to council")
+
+
 def grid_spawn_cmd(
     workers: int = typer.Option(
         ...,
@@ -316,17 +460,8 @@ def grid_spawn_cmd(
     All agents use the SAME model for consistent manifest interpretation.
     """
     try:
-        if not isinstance(timeout, int):
-            timeout = 3600
-        if not isinstance(executor, str):
-            executor = "auto"
-        normalized_executor = executor.strip().lower() or "auto"
-        if normalized_executor not in {"auto", "codex"}:
-            raise GridSpawnError(
-                f"Unsupported executor: {executor}",
-                cause="grid-spawn currently supports Codex execution only",
-                fix_command="loom grid-spawn --executor codex --workers N",
-            )
+        timeout, _ = _validate_grid_spawn_config(timeout, executor)
+
         state = _require_project_state()
         _ensure_grid_spawn_prerequisites(state, workers)
         manifest_path = state.workers_path / "manifest.json"
@@ -340,115 +475,26 @@ def grid_spawn_cmd(
         typer.echo(f"Spawning {workers} agent{'s' if workers > 1 else ''} — atomic sprint, no cancel.")
         typer.echo("")
 
-        processes: list[dict[str, Any]] = []
-        for i in range(1, workers + 1):
-            worker_name = f"worker-{i:03d}"
-            worker_dir = state.workers_path / worker_name
-
-            giv = _read_worker_giv(worker_dir)
-            metadata = _read_worker_metadata(worker_dir)
-            work_unit_text = _read_worker_work_unit(worker_dir)
-            task_prompt = _build_task_prompt(
-                worker_name,
-                work_unit_text,
-                giv,
-                metadata,
-                blueprint=blueprint,
-                project_root=project_root,
-            )
-
-            from ..state import transition_worker_state
-
-            transition_worker_state(manifest_path, worker_name, "executing")
-
-            typer.echo(f"  ▶  Spawning {worker_name}...")
-            proc = _spawn_worker(worker_name, worker_dir, task_prompt, model)
-
-            processes.append(
-                {
-                    "name": worker_name,
-                    "dir": worker_dir,
-                    "proc": proc,
-                    "started": time.time(),
-                }
-            )
-
-        if not processes:
-            raise SprintError(
-                "No workers spawned.",
-                cause="worker directories were missing",
-                fix_command="gaijinn run-grid --workers 2",
-            )
+        processes = _spawn_workers(
+            state,
+            workers,
+            model,
+            manifest_path,
+            blueprint,
+            project_root,
+        )
 
         typer.echo("")
         typer.echo(f"All {len(processes)} agent{'s' if len(processes) > 1 else ''} spawned.")
         typer.echo("Waiting for completion (atomic sprint — no cancel)...")
         typer.echo("")
 
-        completed = 0
-        failed = 0
-        for entry in processes:
-            proc = entry["proc"]
-            timed_out = False
-            try:
-                proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                proc.kill()
-                proc.wait()
-            elapsed = time.time() - entry["started"]
-
-            if timed_out:
-                typer.echo(f"  ✘  {entry['name']}: TIMED OUT after {timeout}s")
-                failed += 1
-            elif proc.returncode == 0:
-                typer.echo(f"  ✔  {entry['name']}: completed in {elapsed:.1f}s")
-                completed += 1
-            else:
-                typer.echo(f"  ✘  {entry['name']}: FAILED (exit {proc.returncode}) in {elapsed:.1f}s")
-                failed += 1
-
-            try:
-                new_status = "timed_out" if timed_out else "completed" if proc.returncode == 0 else "failed"
-                transition_worker_state(manifest_path, entry["name"], new_status)
-
-                with manifest_path.open("r", encoding="utf-8") as mf:
-                    current = json.load(mf)
-                for detail in current.get("worker_details", []):
-                    if detail.get("worker_id") == entry["name"]:
-                        detail["elapsed_seconds"] = round(elapsed, 1)
-                        break
-                current["sprint"] = {
-                    "atomic": True,
-                    "cancel_supported": False,
-                    "executor": "codex",
-                    "model": model,
-                    "completed": completed + failed,
-                    "failed": failed,
-                    "timeout_seconds": timeout,
-                }
-                _write_manifest_atomic(manifest_path, current)
-            except Exception as exc:
-                typer.echo(f"Warning: failed to update worker manifest at {manifest_path}: {exc}")
+        completed, failed = _monitor_workers(processes, timeout, manifest_path, model)
 
         typer.echo("")
         typer.echo(f"Sprint complete: {completed} passed, {failed} failed, {len(processes)} total")
 
-        handoff_count = 0
-        for entry in processes:
-            log_path = entry["dir"] / OUTPUT_LOG_FILENAME
-            if not log_path.exists():
-                continue
-            log_text = log_path.read_text(encoding="utf-8", errors="replace")
-            published = publish_handoff_tickets_from_log(
-                entry["name"],
-                log_text,
-                blueprint,
-                project_root=project_root,
-            )
-            handoff_count += len(published)
-        if handoff_count:
-            typer.echo(f"Handoff bus: {handoff_count} transaction(s) published to council")
+        _publish_handoffs(processes, blueprint, project_root)
 
         if failed > 0:
             raise SprintError(

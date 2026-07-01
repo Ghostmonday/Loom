@@ -1,6 +1,6 @@
 # Loom full dev automation — work queue
 
-**Last reconciled:** 2026-06-26  
+**Last reconciled:** 2026-07-01
 **For:** Director (gate) · Claw X-OPS + Codex (execution after green light)  
 **Session start:** `docs/operations/clawx-session-start.md` ← **read every time**
 
@@ -20,11 +20,13 @@
 
 | ID | Slice | Status | Notes |
 |----|-------|--------|-------|
-| C01–C23 | backend waves | ✅ on main | see git log |
-| FIX | SNAP/venv + loom tests | ✅ verify | branch `fix/snap-venv-and-session-start` / PR #36 |
-| **CRIT** | documentation + product critique mission | **NOW** | **blocks UI** — Amir green light per item |
-| C12–C17 | UI wave | blocked | until CRIT mission addressed per Director gate |
-| LOOM-210 | continuation+launch code | blocked | until C20 stable on main |
+| C01–C23 | backend waves | ✅ on main | `test_full_pipeline_mock` green (883 tests) |
+| C20 | contract status flip | ✅ on branch | `cleanup/composer-parallel-sweep` — synthesis maps aligned to code |
+| FIX | SNAP/venv + loom tests | ✅ verify | merge PR #36 when CI green |
+| **CRIT** | documentation + product critique | **NOW** | Amir green light per ID — see `gate-brief-crit-p1.md` |
+| C12–C17 | UI wave | **partial** | governance UI shipping (`sandbox_frontend`); **CRIT-P1 blocks communication map** |
+| PARTIAL | `flow.loom_interrogation_adaptive_paid` | open | mirror `question.submit_answer` dispatch — next backend slice |
+| LOOM-210 | continuation+launch code | blocked | until C20 on main |
 | SQ | skill sanity side quest | ⏳ | optional report |
 
 ---

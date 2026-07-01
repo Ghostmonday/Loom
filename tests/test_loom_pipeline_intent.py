@@ -66,9 +66,11 @@ def test_loom_pipeline_declares_full_action_chain() -> None:
         assert action_id in actions, f"missing pipeline action {action_id}"
 
 
-def test_loom_pipeline_synthesis_not_implemented_yet() -> None:
+def test_loom_pipeline_synthesis_is_shipped() -> None:
     synthesis = _load("loom-pipeline-intent-map.json")["actions"]["blueprint.synthesize"]
-    assert synthesis["status"] == "not_implemented"
+    assert synthesis["status"] == "shipped"
+    assert synthesis["algorithm_binding"]["module"] == "aoc_supervisor/loom_blueprint_synthesizer.py"
+    assert synthesis["algorithm_binding"]["entrypoint"] == "synthesize_blueprint"
     assert synthesis["algorithm_binding"]["ticket"] == "LOOM-203"
 
 

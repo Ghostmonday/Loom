@@ -26,7 +26,7 @@
     {"phase": "handoff_pending", "action": "handoff.confirm", "api": ["POST /api/v1/intent-forge/sessions/{session_id}/handoff?action=confirm"]},
     {"phase": "handoff_pending", "action": "handoff.accept", "api": ["POST /api/v1/intent-forge/sessions/{session_id}/handoff?action=accept"]},
     {"phase": "teleology_deliberating", "action": "teleology.deliberate", "api": ["GET /api/v1/blueprint/deliberate"], "transport": "sse"},
-    {"phase": "blueprint_synthesis", "action": "blueprint.synthesize", "api": ["POST /api/v1/loom/blueprint/synthesize"], "status": "not_implemented"},
+    {"phase": "blueprint_synthesis", "action": "blueprint.synthesize", "api": ["POST /api/v1/loom/blueprint/synthesize"], "status": "shipped"},
     {"phase": "awaiting_swarm", "action": "orchestrate.prepare", "api": ["POST /api/v1/orchestrate/prepare"], "body_requires": ["intent", "intent_forge_session_id", "phases"]},
     {"phase": "awaiting_swarm", "action": "orchestrate.swarm", "api": ["POST /api/v1/orchestrate/swarm"]},
     {"phase": "sprinting", "action": "deploy.sprint", "api": ["POST /api/v1/quote", "POST /api/v1/blueprint/purchase", "POST /api/v1/grid/spawn"]},
@@ -111,7 +111,7 @@
     "blueprint.synthesize": {
       "codex_slices": ["C04", "C05", "C06", "C07", "C08"],
       "api": {"method": "POST", "path": "/api/v1/loom/blueprint/synthesize", "body": {"intent_forge_session_id": "string", "teleology_receipt": "object"}},
-      "status": "not_implemented",
+      "status": "shipped",
       "returns": ["blueprint", "dark_bridge_count", "projection_mode", "work_units"],
       "postconditions": [
         "projection_mode == loom_synthesis",
@@ -184,7 +184,7 @@
       "run_loom_pipeline_scenario",
       "collect_teleology_receipt"
     ],
-    "status": "partial — C18 implements dispatch_loom_action and run_loom_pipeline_scenario; teleology receipt collection is provided by C09",
+    "status": "shipped — C18/C19 full pipeline mirror; adaptive interrogation dispatch partial (flow.loom_interrogation_adaptive_paid)",
     "ticket": "LOOM-209"
   },
   "smoke_scenarios": [

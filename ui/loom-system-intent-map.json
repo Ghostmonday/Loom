@@ -130,9 +130,9 @@
         "subphases": ["intent_parse", "graph_ingest", "curvature_compute", "bridge_detect", "weld_plan", "partition", "blueprint_freeze"]
       },
       "blueprint_synthesizer": {
-        "module": "TBD — loom_blueprint_synthesizer.py",
+        "module": "aoc_supervisor/loom_blueprint_synthesizer.py",
         "entrypoint": "synthesize_blueprint",
-        "status": "not_shipped",
+        "status": "shipped",
         "ticket": "LOOM-203",
         "role": "Fuse HANDED_OFF executable_projection with gravity/curvature plan; output unified blueprint.json"
       },
@@ -158,7 +158,7 @@
         "module": "aoc_supervisor/ui_intent.py",
         "entrypoint": "UiIntentDriver.run_and_verify_scenario",
         "status": "partial",
-        "gaps": ["No loom full-pipeline scenario", "Intent forge steps partial"]
+        "gaps": ["flow.loom_full_pipeline_mock shipped", "flow.loom_interrogation_adaptive_paid mirror dispatch partial"]
       }
     },
     "implementation_tickets": [

@@ -37,14 +37,17 @@ def _find_vault_root(cwd: Path) -> Path | None:
         if gaijinn_dir.is_dir() and (gaijinn_dir / "bridge" / "council.md").exists():
             return parent
 
-    # Check known vault paths (repo-relative + optional override)
+    # Check known vault paths (repo-relative when cwd is inside repo + optional override)
     repo_root = Path(__file__).resolve().parents[3]
-    known_vaults = [
-        repo_root / "vaults" / "gaijinn-memory-fs",
-    ]
+    known_vaults: list[Path] = []
     env_vault = Path(v) if (v := os.environ.get("GAIJINN_VAULT_ROOT")) else None
     if env_vault is not None:
-        known_vaults.insert(0, env_vault)
+        known_vaults.append(env_vault)
+    try:
+        current.relative_to(repo_root)
+        known_vaults.append(repo_root / "vaults" / "gaijinn-memory-fs")
+    except ValueError:
+        pass
     for v in known_vaults:
         if v.exists() and (v / ".gaijinn").is_dir():
             return v

@@ -303,6 +303,60 @@ class IntentForgeService:
     def get_session(self, session_id: str) -> dict[str, Any]:
         return public_session_view(self.store.load(session_id))
 
+    def _resolve_current_question(self, state: dict[str, Any], question_id: str) -> tuple[str, str]:
+        current = state.get("current_question") or {}
+        current_qid = str(current.get("question_id", "")).strip() if isinstance(current, dict) else ""
+        submitted_qid = question_id.strip()
+        if not current_qid:
+            raise ValueError("cannot submit answer without a current_question")
+        if submitted_qid and submitted_qid != current_qid:
+            raise ValueError("question_id does not match current_question")
+        domain = str(current.get("domain", "functional_requirements"))
+        return current_qid, domain
+
+    def _handle_contradictions(
+        self,
+        session_id: str,
+        state: dict[str, Any],
+        question_id: str,
+        expected_version: int,
+        save_on_conflict: bool = True,
+    ) -> dict[str, Any] | None:
+        merge_contradictions(state, detect_contradictions(state))
+        unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
+        if unresolved:
+            state["session_status"] = "CONFLICT_RESOLUTION"
+            primary = unresolved[0]
+            state["current_question"] = {
+                "question_id": question_id,
+                "domain": "conflict_resolution",
+                "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
+                "options": resolution_options(primary, state),
+            }
+            if save_on_conflict:
+                self.store.save(session_id, state, expected_version=expected_version)
+            self._emit(
+                session_id,
+                "blueprint.contradiction.detected",
+                state,
+                {"contradiction_id": primary.get("id")},
+            )
+            return public_session_view(state)
+        return None
+
+    def _advance_session_state(self, state: dict[str, Any], clear_current_on_validate: bool = False) -> None:
+        if should_stop_questioning(state):
+            state["session_status"] = "VALIDATING"
+            if clear_current_on_validate:
+                state["current_question"] = None
+        else:
+            next_question = build_next_question(state)
+            state["current_question"] = next_question
+            if next_question is None and state.get("analysis_recovery"):
+                state["session_status"] = "ANALYSIS_BLOCKED"
+            else:
+                state["session_status"] = "QUESTIONING"
+
     def submit_answer(
         self,
         session_id: str,
@@ -322,15 +376,9 @@ class IntentForgeService:
             status = str(state.get("session_status", ""))
             if status not in {"QUESTIONING", "CONFLICT_RESOLUTION"}:
                 raise ValueError(f"cannot submit answer while session is {status}")
-            current = state.get("current_question") or {}
-            current_qid = str(current.get("question_id", "")).strip() if isinstance(current, dict) else ""
-            submitted_qid = question_id.strip()
-            if not current_qid:
-                raise ValueError("cannot submit answer without a current_question")
-            if submitted_qid and submitted_qid != current_qid:
-                raise ValueError("question_id does not match current_question")
-            question_id = current_qid
-            domain = str(current.get("domain", "functional_requirements"))
+
+            question_id, domain = self._resolve_current_question(state, question_id)
+
             if action == "skip" and status == "QUESTIONING":
                 coverage = state.setdefault("domain_coverage", {})
                 if isinstance(coverage, dict):
@@ -345,35 +393,15 @@ class IntentForgeService:
                     domain=domain,
                     conflict_resolution=status == "CONFLICT_RESOLUTION",
                 )
+
             bump_blueprint_version(state)
-            merge_contradictions(state, detect_contradictions(state))
-            unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-            if unresolved:
-                state["session_status"] = "CONFLICT_RESOLUTION"
-                primary = unresolved[0]
-                state["current_question"] = {
-                    "question_id": question_id,
-                    "domain": "conflict_resolution",
-                    "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
-                    "options": resolution_options(primary, state),
-                }
-                self.store.save(session_id, state, expected_version=expected_blueprint_version)
-                self._emit(
-                    session_id,
-                    "blueprint.contradiction.detected",
-                    state,
-                    {"contradiction_id": primary.get("id")},
-                )
-                return public_session_view(state)
-            if should_stop_questioning(state):
-                state["session_status"] = "VALIDATING"
-            else:
-                next_question = build_next_question(state)
-                state["current_question"] = next_question
-                if next_question is None and state.get("analysis_recovery"):
-                    state["session_status"] = "ANALYSIS_BLOCKED"
-                else:
-                    state["session_status"] = "QUESTIONING"
+
+            result = self._handle_contradictions(session_id, state, question_id, expected_blueprint_version)
+            if result:
+                return result
+
+            self._advance_session_state(state)
+
             self.store.save(session_id, state, expected_version=expected_blueprint_version)
             self._emit(session_id, "intent.answer.recorded", state, {"question_id": question_id, "action": action})
             if state.get("current_question"):
@@ -437,27 +465,14 @@ class IntentForgeService:
                 domain=domain,
             )
             bump_blueprint_version(state)
-            merge_contradictions(state, detect_contradictions(state))
-            unresolved = [c for c in state.get("contradictions", []) if isinstance(c, dict) and not c.get("resolved")]
-            if unresolved:
-                state["session_status"] = "CONFLICT_RESOLUTION"
-                primary = unresolved[0]
-                state["current_question"] = {
-                    "question_id": revision_id,
-                    "domain": "conflict_resolution",
-                    "text": f"Resolve contradiction {primary.get('id')}: {primary.get('description')}",
-                    "options": resolution_options(primary, state),
-                }
-            elif should_stop_questioning(state):
-                state["session_status"] = "VALIDATING"
-                state["current_question"] = None
-            else:
-                next_question = build_next_question(state)
-                state["current_question"] = next_question
-                if next_question is None and state.get("analysis_recovery"):
-                    state["session_status"] = "ANALYSIS_BLOCKED"
-                else:
-                    state["session_status"] = "QUESTIONING"
+
+            # Contradictions in revision do NOT return early; they proceed to save and emit revision event
+            self._handle_contradictions(
+                session_id, state, revision_id, expected_blueprint_version, save_on_conflict=False
+            )
+            if state["session_status"] != "CONFLICT_RESOLUTION":
+                self._advance_session_state(state, clear_current_on_validate=True)
+
             self.store.save(session_id, state, expected_version=expected_blueprint_version)
             self._emit(
                 session_id,

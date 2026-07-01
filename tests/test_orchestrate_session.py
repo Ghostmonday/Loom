@@ -333,3 +333,103 @@ def test_slim_prepare_reports_loom_synthesis_projection_mode(
     assert snapshot.work_units == 1
     meta = json.loads((snapshot.project_root / ".gaijinn" / "session.json").read_text(encoding="utf-8"))
     assert meta["blueprint_mode"] == "loom_synthesis"
+
+def test_validate_loaded_context_success_no_requirements() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    # Backend phase doesn't require loaded context according to _required_loaded_ends
+    result = validate_loaded_context(("backend",), None)
+    assert result == {}
+
+
+def test_validate_loaded_context_success_with_requirements(tmp_path: Path) -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    backend_path = tmp_path / "backend"
+    backend_path.mkdir()
+    frontend_path = tmp_path / "frontend"
+    frontend_path.mkdir()
+
+    loaded_context = {"backend": {"project_path": str(backend_path)}, "frontend": {"project_path": str(frontend_path)}}
+    # Testing phase requires both backend and frontend
+    result = validate_loaded_context(("testing",), loaded_context)
+    assert "backend" in result
+    assert "frontend" in result
+    assert result["backend"]["project_path"] == str(backend_path)
+
+
+def test_validate_loaded_context_missing_requirements() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    # Testing phase requires both backend and frontend
+    with pytest.raises(ValueError, match="Testing requires loaded context first: backend, frontend"):
+        validate_loaded_context(("testing",), {})
+
+
+def test_validate_loaded_context_partial_missing_requirements(tmp_path: Path) -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    backend_path = tmp_path / "backend"
+    backend_path.mkdir()
+
+    loaded_context = {"backend": {"project_path": str(backend_path)}}
+    # Testing phase requires both backend and frontend
+    with pytest.raises(ValueError, match="Testing requires loaded context first: frontend"):
+        validate_loaded_context(("testing",), loaded_context)
+
+
+def test_validate_loaded_context_invalid_structure() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    with pytest.raises(ValueError, match="loaded_context must be an object"):
+        validate_loaded_context(("backend",), "not a dict")
+
+
+def test_validate_loaded_context_invalid_end_structure() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    with pytest.raises(ValueError, match="loaded_context.backend must be an object"):
+        validate_loaded_context(("backend",), {"backend": "not a dict"})
+
+
+def test_validate_loaded_context_missing_source_keys() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    with pytest.raises(ValueError, match="loaded_context.backend must include prior_session_id, zip_path, or project_path"):
+        validate_loaded_context(("backend",), {"backend": {"other": "value"}})
+
+
+def test_validate_loaded_context_non_existent_path() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    with pytest.raises(ValueError, match="loaded_context.backend.project_path does not exist"):
+        validate_loaded_context(("backend",), {"backend": {"project_path": "/non/existent/path"}})
+
+
+def test_validate_loaded_context_unknown_phase_fallback() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    # unknown_phase is not in PHASE_LABELS, should fall back to name
+    # We need to force a requirement to see the error message
+    # _required_loaded_ends returns () for unknown combinations,
+    # but we can try to test the label join logic if we can trigger an error.
+
+    # Mocking _required_loaded_ends to return something for our unknown phase
+    import aoc_supervisor.orchestrate_session as orchestrate
+
+    original = orchestrate._required_loaded_ends
+    orchestrate._required_loaded_ends = lambda phases: ("backend",) if "unknown_phase" in phases else original(phases)
+
+    try:
+        with pytest.raises(ValueError, match="unknown_phase requires loaded context first: backend"):
+            validate_loaded_context(("unknown_phase",), {})
+    finally:
+        orchestrate._required_loaded_ends = original
+
+
+def test_validate_loaded_context_multiple_phases_message() -> None:
+    from aoc_supervisor.orchestrate_session import validate_loaded_context
+
+    # Multiple phases should be joined by " + " using labels
+    with pytest.raises(ValueError, match=r"Frontend \+ Testing requires loaded context first: backend"):
+        validate_loaded_context(("frontend", "testing"), {})

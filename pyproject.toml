@@ -43,7 +43,7 @@ dev = [
     "pytest",
     "pytest-cov",
     "ruff",
-    "tomli; python_version < \"3.11\"",
+    "tomli",
 ]
 
 [project.scripts]
@@ -86,6 +86,8 @@ select = ["E", "F", "I", "W", "N", "UP", "S", "SIM"]
 "aoc-cli/aoc_cli/cli.py" = ["S603", "S607"]
 "aoc-cli/aoc_cli/helpers/*.py" = ["S603", "S607"]
 "aoc-cli/aoc_cli/commands/*.py" = ["S603", "S607"]
+"loom-frontend-base/scripts/*.py" = ["E501"]
+"frontend-formation-complete/scripts/*.py" = ["E501"]
 "aoc_supervisor/aoc_supervisor/api.py" = ["S104", "S603"]
 "aoc_supervisor/aoc_supervisor/preflight.py" = ["S108"]
 "tests/test_preflight.py" = ["S108"]
